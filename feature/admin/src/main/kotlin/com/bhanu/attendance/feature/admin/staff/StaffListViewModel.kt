@@ -45,13 +45,21 @@ class StaffListViewModel @Inject constructor(
     private val dialogState = MutableStateFlow(false)
     private val selectedId = MutableStateFlow<String?>(null)
 
+    /**
+     * Staff rows for the admin list.
+     *
+     * Filters out [Role.ADMIN]. The admin is a row in the same table so that it is
+     * authenticated by exactly the same code path as staff, but it has no face, no punches
+     * and is not something an admin should be able to "enrol" or "deactivate" from this
+     * screen.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     private val items: Flow<List<StaffListItem>> = combine(
         staffRepository.observeAll(),
         attendanceRepository.observeAll(),
     ) { staff, records ->
         val counts = records.groupingBy { it.staffId }.eachCount()
-        staff.map { s ->
+        staff.filter { it.role == com.bhanu.attendance.domain.model.Role.STAFF }.map { s ->
             StaffListItem(
                 id = s.id,
                 name = s.name,
@@ -116,6 +124,20 @@ class StaffListViewModel @Inject constructor(
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StaffDetailUiState())
+
+    /**
+     * Staff id whose PIN-reset dialog is open, or null.
+     *
+     * Held in the ViewModel rather than as composable-local state so the dialog survives the
+     * Activity recreation a fold or rotation causes — a dialog that vanishes mid-edit is a
+     * data-entry bug, not a cosmetic one.
+     */
+    private val _pinResetTarget = MutableStateFlow<String?>(null)
+    val pinResetTarget: StateFlow<String?> = _pinResetTarget.asStateFlow()
+
+    fun openPinReset(staffId: String) = _pinResetTarget.update { staffId }
+
+    fun closePinReset() = _pinResetTarget.update { null }
 
     private val _events = Channel<StaffListEvent>(Channel.BUFFERED)
     val events: Flow<StaffListEvent> = _events.receiveAsFlow()

@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width as layoutWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -38,6 +41,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
+import androidx.compose.material3.adaptive.allVerticalHingeBounds
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
@@ -69,6 +76,23 @@ import androidx.activity.compose.BackHandler
  * pane on a tablet, which is what keeps the two paths from drifting apart.
  */
 @OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Staff management as an adaptive list-detail layout.
+ *
+ * Follows the documented canonical list-detail semantics:
+ *
+ *  - **Expanded width** shows the list and the detail side by side; selecting a row updates
+ *    the detail pane.
+ *  - **Compact width** shows the list, and selecting a row shows the detail *in place of* the
+ *    list; the back gesture returns to the list.
+ *
+ * Using the window size class directly (via `currentWindowAdaptiveInfoV2()`, which is not
+ * experimental and understands the L/XL classes) rather than `ListDetailPaneScaffold`. The
+ * scaffold would own pane visibility itself, but it also owns navigation between panes, and
+ * this screen already holds the selection in a ViewModel that survives configuration
+ * changes — which is what actually keeps the selection stable when a foldable folds and the
+ * Activity is recreated. Handing that state to the scaffold would mean giving it up.
+ */
 @Composable
 fun StaffListRoute(
     onSelectStaff: (String?) -> Unit,
@@ -82,48 +106,90 @@ fun StaffListRoute(
     val addState by viewModel.addStaffState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var showResetPin by remember { mutableStateOf<String?>(null) }
+    // Two panes only when there is genuinely room. The hinge is a foldable's physical
+    // boundary, so the split is nudged to avoid placing content across it.
+    val windowInfo = currentWindowAdaptiveInfoV2()
+    val widthDp = windowInfo.windowSizeClass.minWidthDp
+    val isTwoPane = widthDp >= MEDIUM_WIDTH_BREAKPOINT_DP
+    val verticalHinge = windowInfo.windowPosture.allVerticalHingeBounds.firstOrNull()
+
+    val pinResetTarget by viewModel.pinResetTarget.collectAsStateWithLifecycle()
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
-                StaffListEvent.OpenAddDialog -> Unit // handled by the dialog's own state
-                StaffListEvent.CloseAddDialog -> Unit
+                StaffListEvent.OpenAddDialog,
+                StaffListEvent.CloseAddDialog,
+                -> Unit // driven by the dialog's own state
+
                 is StaffListEvent.SelectStaff -> onSelectStaff(event.id)
-                is StaffListEvent.OpenEnrolment -> onOpenEnrolment(event.staffId)
-                is StaffListEvent.ShowPinReset -> showResetPin = event.staffId
                 is StaffListEvent.ShowMessage -> snackbarHostState.showSnackbar(event.message)
+                // The pin-reset target is state now, so the event is a no-op here.
+                is StaffListEvent.ShowPinReset -> viewModel.openPinReset(event.staffId)
+                is StaffListEvent.OpenEnrolment ->
+                    detail.staff?.let { onOpenEnrolment(it.id) }
             }
         }
     }
 
-    StaffListPane(
-        state = state,
-        onQueryChange = viewModel::onQueryChange,
-        onStaffClick = { viewModel.selectStaff(it); onSelectStaff(it) },
-        onAddClick = viewModel::openAddDialog,
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.admin_title)) },
-                actions = {
-                    IconButton(
-                        onClick = viewModel::openAddDialog,
-                        modifier = Modifier.testTag("admin_add_button"),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = stringResource(R.string.admin_add_staff),
-                        )
-                    }
-                },
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    )
+    // On compact width the detail replaces the list; the back gesture returns to the list,
+    // which is the documented canonical behaviour for a single-pane window.
+    if (!isTwoPane && detail.staff != null) {
+        BackHandler { viewModel.selectStaff(null) }
+        StaffDetailPane(
+            state = detail,
+            onEnrolFace = { detail.staff?.let { onOpenEnrolment(it.id) } },
+            onResetPin = { detail.staff?.let { viewModel.openPinReset(it.id) } },
+            onToggleActive = { active -> detail.staff?.let { viewModel.setActive(it.id, active) } },
+            onBack = { viewModel.selectStaff(null) },
+            modifier = modifier,
+        )
+        return
+    }
 
-    // The dialog is driven by explicit state rather than a boolean, so it cannot be dismissed
-    // and reopened with stale form contents.
+    Row(modifier = modifier.fillMaxSize()) {
+        StaffListPane(
+            state = state,
+            onQueryChange = viewModel::onQueryChange,
+            onStaffClick = { viewModel.selectStaff(it) },
+            onAddClick = viewModel::openAddDialog,
+            modifier = Modifier.weight(if (isTwoPane) LIST_PANE_WEIGHT else 1f),
+            topBar = {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.admin_title)) },
+                    actions = {
+                        IconButton(
+                            onClick = viewModel::openAddDialog,
+                            modifier = Modifier.testTag("admin_add_button"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = stringResource(R.string.admin_add_staff),
+                            )
+                        }
+                    },
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        )
+
+        if (isTwoPane) {
+            // Inset by the hinge when one is present so neither pane is split across it.
+            val hingeWidth = verticalHinge?.let {
+                with(LocalDensity.current) { it.width.toDp() }
+            } ?: 0.dp
+            Spacer(modifier = Modifier.layoutWidth(hingeWidth))
+
+            StaffDetailPane(
+                state = detail,
+                onEnrolFace = { detail.staff?.let { onOpenEnrolment(it.id) } },
+                onResetPin = { detail.staff?.let { viewModel.openPinReset(it.id) } },
+                onToggleActive = { active -> detail.staff?.let { viewModel.setActive(it.id, active) } },
+                modifier = Modifier.weight(1f - LIST_PANE_WEIGHT),
+            )
+        }
+    }
+
     if (state.isAddDialogVisible) {
         AddStaffDialog(
             state = addState,
@@ -132,17 +198,22 @@ fun StaffListRoute(
         )
     }
 
-    showResetPin?.let { staffId ->
+    pinResetTarget?.let { staffId ->
         ResetPinDialog(
-            staffId = staffId,
-            onDismiss = { showResetPin = null },
+            onDismiss = viewModel::closePinReset,
             onConfirm = { pin ->
                 viewModel.resetPin(staffId, pin)
-                showResetPin = null
+                viewModel.closePinReset()
             },
         )
     }
 }
+
+/** Material 3 width breakpoint: 600dp. */
+private const val MEDIUM_WIDTH_BREAKPOINT_DP = 600
+
+/** The list keeps the smaller share; the detail is the working surface. */
+private const val LIST_PANE_WEIGHT = 0.42f
 
 /** The list pane. Renders as the only pane on a compact window, or the left pane when wide. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -466,7 +537,6 @@ private fun AddStaffDialog(
 
 @Composable
 private fun ResetPinDialog(
-    staffId: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {

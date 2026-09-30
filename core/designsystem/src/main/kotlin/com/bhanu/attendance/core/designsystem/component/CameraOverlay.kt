@@ -61,13 +61,35 @@ fun FaceGuideOverlay(
             val topLeft = Offset((size.width - side) / 2f, (size.height - side) / 2f)
             val strokeWidth = 4.dp.toPx()
 
-            // Dim everything outside the guide so the eye goes to the right place.
-            drawRect(color = Color.Black.copy(alpha = 0.35f))
-            drawOval(
-                color = Color.Transparent,
-                topLeft = topLeft,
-                size = Size(side, side * 1.25f),
-                blendMode = androidx.compose.ui.graphics.BlendMode.Clear,
+            // Dim everything *outside* the guide so the eye goes to the right place.
+            //
+            // Drawn as four rectangles rather than a full-screen fill plus a BlendMode.Clear
+            // cut-out: the camera preview is a SurfaceView in its own window layer, so Clear
+            // punches a hole through the Compose canvas down to the black window background
+            // instead of revealing the preview. On a real device that painted the guide's
+            // interior solid black, hiding the very area the person needs to see in order to
+            // position their face.
+            val ovalHeight = side * 1.25f
+            val scrim = Color.Black.copy(alpha = 0.45f)
+            drawRect(
+                color = scrim,
+                topLeft = Offset.Zero,
+                size = Size(size.width, topLeft.y),
+            )
+            drawRect(
+                color = scrim,
+                topLeft = Offset(0f, topLeft.y + ovalHeight),
+                size = Size(size.width, size.height - (topLeft.y + ovalHeight)),
+            )
+            drawRect(
+                color = scrim,
+                topLeft = Offset(0f, topLeft.y),
+                size = Size(topLeft.x, ovalHeight),
+            )
+            drawRect(
+                color = scrim,
+                topLeft = Offset(topLeft.x + side, topLeft.y),
+                size = Size(size.width - (topLeft.x + side), ovalHeight),
             )
 
             drawOval(

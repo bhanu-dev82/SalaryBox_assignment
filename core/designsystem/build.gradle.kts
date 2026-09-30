@@ -53,10 +53,12 @@ dependencies {
     implementation(libs.camera.view)
     implementation(libs.coroutines.android)
 
-    implementation(libs.adaptive)
-    implementation(libs.adaptive.layout)
-    implementation(libs.adaptive.navigation)
-    implementation(libs.material3.adaptive.navigation.suite)
+    // api, not implementation: feature modules read the window size class and posture
+    // directly to decide their own layout.
+    api(libs.adaptive)
+    api(libs.adaptive.layout)
+    api(libs.adaptive.navigation)
+    api(libs.material3.adaptive.navigation.suite)
     implementation(libs.window)
     implementation(libs.core.ktx)
     implementation( libs.compose.ui.tooling.preview)
