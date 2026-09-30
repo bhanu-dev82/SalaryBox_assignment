@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.Locale
 import javax.inject.Inject
 
 /** What the home screen should do next, in one place. */
@@ -153,20 +154,22 @@ class StaffHomeViewModel @Inject constructor(
     }
 
     private fun AttendanceRecord.toHistoryItem(geofence: Geofence?): HistoryItem {
-        val result: GeofenceResult? = GeofenceEvaluator.evaluate(location, geofence)
+        val fix = location
+        val result: GeofenceResult? = GeofenceEvaluator.evaluate(fix, geofence)
         return HistoryItem(
             id = id,
             staffName = staffName,
             punchType = punchType,
             occurredAt = occurredAt,
             matchScore = matchScore,
-            geofenceLabel = when (result?.state) {
-                GeofenceState.INSIDE -> "Inside the work site"
-                GeofenceState.OUTSIDE ->
-                    "Outside the work site, ${GeofenceEvaluator.formatDistance(result.distanceMeters)} away"
-                GeofenceState.LOCATION_UNAVAILABLE -> "No location recorded"
-                GeofenceState.NOT_CONFIGURED -> "No work site configured"
-                null -> "Unknown"
+            geofenceLabel = when {
+                fix == null -> "No location recorded"
+                result?.state == GeofenceState.INSIDE ->
+                    "Inside the work site · ${fix.latitude.formatCoord()}, ${fix.longitude.formatCoord()}"
+                result?.state == GeofenceState.OUTSIDE ->
+                    "Outside the work site, ${GeofenceEvaluator.formatDistance(result.distanceMeters)} away · " +
+                        "${fix.latitude.formatCoord()}, ${fix.longitude.formatCoord()}"
+                else -> "${fix.latitude.formatCoord()}, ${fix.longitude.formatCoord()}"
             },
             selfiePath = selfiePath,
         )
@@ -175,3 +178,6 @@ class StaffHomeViewModel @Inject constructor(
     private val _historyState = kotlinx.coroutines.flow.MutableStateFlow(HistoryUiState())
     val historyState: StateFlow<HistoryUiState> = _historyState.asStateFlow()
 }
+
+/** Five decimal places is about a metre, which is enough to show the stored fix. */
+private fun Double.formatCoord(): String = "%.5f".format(Locale.US, this)

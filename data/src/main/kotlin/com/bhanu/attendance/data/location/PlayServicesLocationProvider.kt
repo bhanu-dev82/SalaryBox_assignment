@@ -64,10 +64,9 @@ class PlayServicesLocationProvider @Inject constructor(
     @SuppressLint("MissingPermission")
     private suspend fun awaitCurrentLocation(): Location? = suspendCancellableCoroutine { continuation ->
         val request = CurrentLocationRequest.Builder()
-            // BALANCED_POWER rather than HIGH_ACCURACY: a geofence decision does not need
-            // metre-grade precision, and the high-power radio would be a real battery cost
-            // on a device that is being used as a work attendance handset all day.
-            .setPriority(Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+            // One fix per punch. High accuracy for a few seconds is what actually returns
+            // a coordinate; balanced power often comes back empty on a cold GPS.
+            .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
             .setMaxUpdateAgeMillis(MAX_FIX_AGE_MILLIS)
             .setDurationMillis(REQUEST_DURATION_MILLIS)
             .build()
@@ -104,6 +103,6 @@ class PlayServicesLocationProvider @Inject constructor(
     private companion object {
         const val TAG = "LocationProvider"
         const val MAX_FIX_AGE_MILLIS = 2 * 60 * 1000L
-        const val REQUEST_DURATION_MILLIS = 4_000L
+        const val REQUEST_DURATION_MILLIS = 10_000L
     }
 }

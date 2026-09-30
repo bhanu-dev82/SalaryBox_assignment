@@ -169,7 +169,7 @@ class MarkPunchUseCase @Inject constructor(
 
     companion object {
         /** Bounded so a flaky GPS can never make the punch feel like it has hung. */
-        const val LOCATION_TIMEOUT_MILLIS: Long = 6_000
+        const val LOCATION_TIMEOUT_MILLIS: Long = 12_000
     }
 }
 

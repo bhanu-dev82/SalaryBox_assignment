@@ -117,17 +117,21 @@ photo before committing is also simply correct: it is the person's biometric dat
 ## 7. Location is advisory and never blocks attendance
 
 **Decision.** A missing or failed location fix records `LOCATION_UNAVAILABLE` and the punch
-still succeeds. A fix is bounded at 6 s using `PRIORITY_BALANCED_POWER_ACCURACY`.
+still succeeds. A fix is bounded at 12 s using `PRIORITY_HIGH_ACCURACY` for one fix per
+punch, with a last-known fallback and a 15 s warmup while verification runs.
 
 **Rejected.** Requiring location, or refusing a punch when the fix is poor.
 
 **Why.** Refusing someone's attendance because their GPS was poor is a far worse failure than
 recording a slightly less precise location. And `LOCATION_UNAVAILABLE` must be distinct from
-`OUTSIDE` — conflating them would file a false accusation against the employee.
+`OUTSIDE` — conflating them would file a false accusation against the employee. The verify
+screen forces an explicit "Continue without location" choice, so a location-less punch is
+always a deliberate user decision recorded in the audit trail.
 
-**Power choice.** `BALANCED_POWER_ACCURACY` because a 200 m geofence does not need metre
-precision, and the high-power radio is a real battery cost on a device used as a work
-handset all day.
+**Power choice.** `HIGH_ACCURACY` (not balanced) because a punch happens twice a day — the
+radio cost is negligible — while balanced-power often returned empty on a cold GPS, which is
+worse than spending a few seconds of high power. A 200 m geofence does not need metre
+precision, but it does need *a* fix.
 
 ---
 

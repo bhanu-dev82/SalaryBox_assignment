@@ -96,6 +96,22 @@ class VerificationSession(
         return progress(verdict.issue, accepted)
     }
 
+    /**
+     * Notifies the session that a frame contained no usable face.
+     *
+     * A gap in the stream must break the consecutive run: without this, two matches
+     * separated by minutes of empty frames would still count as "3 consecutive",
+     * because the window only ever saw the counted frames. A below-threshold entry
+     * slides the window forward and breaks the run without wiping earlier progress
+     * entirely, so a single dropped frame costs the streak but not the whole attempt.
+     */
+    fun onNoFace(): VerificationProgress {
+        // -2.0 is below any real cosine similarity (-1..1), so it always breaks the run.
+        recentScores.addLast(-2.0)
+        while (recentScores.size > thresholds.considerFrames) recentScores.removeFirst()
+        return progress(QualityIssue.FACE_TOO_SMALL)
+    }
+
     private fun longestConsecutiveRun(): Int {
         var best = 0
         var run = 0

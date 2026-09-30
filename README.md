@@ -52,7 +52,8 @@ echo "sdk.dir=/path/to/Android/Sdk" > local.properties
 
 # 3. Or build an APK
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
-./gradlew assembleRelease      # app/build/outputs/apk/release/  (unsigned, see §8)
+./gradlew assembleRelease      # app/build/outputs/apk/release/app-release.apk
+                               # signed when signing.properties is present, otherwise unsigned
 
 # 4. Tests
 ./gradlew test                 # 56 JVM unit tests, no device needed
@@ -275,9 +276,14 @@ aapt2 dump permissions app/build/outputs/apk/debug/app-debug.apk
 4. **No server.** Everything is on-device by design, so there is no multi-device sync, no
    central revocation, and data is lost if the app is uninstalled. `allowBackup=false` is
    deliberate (see §8) but it does mean a factory reset destroys the attendance record.
-5. **Location accuracy is coarse.** `PRIORITY_BALANCED_POWER_ACCURACY` is chosen because a
-   200 m geofence does not need metre precision and the high-power radio would be a real
-   battery cost. A fix is capped at 6 s and a timeout is not an error.
+5. **Location is advisory, never blocking.** A punch is always recorded; a missing fix is
+   stored honestly as `LOCATION_UNAVAILABLE` (never as `OUTSIDE`, which would be a false
+   accusation). The fix uses `PRIORITY_HIGH_ACCURACY` for one fix per punch — a punch happens
+   twice a day, so the high-power radio cost is negligible, while balanced-power often came
+   back empty on a cold GPS. Bounded at 12 s with a last-known fallback, plus a 15 s warmup
+   while verification runs; a timeout is not an error. The verify screen requires an explicit
+   "Continue without location" tap to proceed without a fix, so skipping is a user choice,
+   not a silent default.
 6. **Single admin, no PIN change flow.** The admin PIN is a seeded constant. There is an
    admin-initiated *staff* PIN reset; an admin self-service PIN change is not built.
 

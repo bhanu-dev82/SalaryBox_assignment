@@ -242,24 +242,30 @@ class MediaPipeFaceEngine @Inject constructor(
         val width = bitmap.width
         val height = bitmap.height
         if (width <= 0 || height <= 0) return 0f
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        // Rec. 601 luma. A sparse sample is enough: this is a lighting sanity check, not a
-        // measurement, and reading 8 megapixels every frame would cost more than it is worth.
-        var total = 0L
-        var count = 0
-        val step = (width * height / SAMPLE_COUNT).coerceAtLeast(1)
-        var i = 0
-        while (i < pixels.size) {
-            val pixel = pixels[i]
-            val r = (pixel shr 16) and 0xFF
-            val g = (pixel shr 8) and 0xFF
-            val b = pixel and 0xFF
-            total += (299L * r + 587L * g + 114L * b) / 1000L
-            count++
-            i += step
+        // Downscale to a tiny probe before reading pixels: the lighting gate is a sanity
+        // check, not a measurement, and allocating a full-frame IntArray (~3.6 MB at 720p)
+        // on every camera frame churns the GC. A 48x48 probe (2,304 px) is ample.
+        val probeWidth = 48
+        val probeHeight = 48
+        val probe = runCatching {
+            Bitmap.createScaledBitmap(bitmap, probeWidth, probeHeight, false)
+        }.getOrNull() ?: return 0f
+        try {
+            val pixels = IntArray(probeWidth * probeHeight)
+            probe.getPixels(pixels, 0, probeWidth, 0, 0, probeWidth, probeHeight)
+            var total = 0L
+            for (pixel in pixels) {
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                total += (299L * r + 587L * g + 114L * b) / 1000L
+            }
+            return if (pixels.isEmpty()) 0f else (total.toFloat() / pixels.size)
+        } finally {
+            // createScaledBitmap can return the source when the size already matches.
+            // Recycling that would hand MediaPipe a dead bitmap and look like "no face".
+            if (probe !== bitmap && !probe.isRecycled) probe.recycle()
         }
-        return if (count == 0) 0f else (total.toFloat() / count)
     }
 
     override fun lastError(): AppError? = lastError
@@ -306,7 +312,6 @@ class MediaPipeFaceEngine @Inject constructor(
         const val TAG = "FaceEngine"
         const val MODEL_ASSET_NAME = "face_landmarker.task"
         const val MIN_CONFIDENCE = 0.5f
-        private const val SAMPLE_COUNT = 4_096
         private const val INFERENCE_TIMEOUT_MILLIS = 5_000L
     }
 }

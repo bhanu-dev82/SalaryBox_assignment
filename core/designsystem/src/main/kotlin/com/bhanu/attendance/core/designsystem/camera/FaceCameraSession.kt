@@ -22,8 +22,10 @@ import androidx.core.content.ContextCompat
 import com.bhanu.attendance.core.common.logging.AppLogger
 import com.bhanu.attendance.data.face.FaceEngine
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -97,6 +99,10 @@ class FaceCameraSession(
             return
         }
 
+        // Cancellation is cooperative. A confirm or a dispose can unbind while this
+        // function is past the provider future; binding after that turns the camera back on.
+        if (!coroutineContext.isActive) return
+
         // Sensor buffers are landscape. rotationDegrees is how far to turn them so they
         // match this target. Without it, MediaPipe is shown a sideways face and reports
         // that no face is present.
@@ -145,6 +151,11 @@ class FaceCameraSession(
             .build()
         imageCapture = capture
 
+        // Cancellation is cooperative. A confirm or a dispose can unbind while this
+        // function is still between the provider future and bindToLifecycle; binding
+        // after that would turn the camera back on.
+        if (!coroutineContext.isActive) return
+
         runCatching {
             cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(
@@ -171,8 +182,11 @@ class FaceCameraSession(
      * Used for the attendance selfie. The encode happens off the main thread; CameraX itself
      * writes the file on its own executor.
      */
-    suspend fun captureJpeg(destination: File, maxDimension: Int = 1280, quality: Int = 85): ByteArray? {
+    suspend fun captureJpeg(maxDimension: Int = 1280, quality: Int = 85): ByteArray? {
         val capture = imageCapture ?: return null
+        // A relative path lands in the process working directory, which this app cannot
+        // write. The still has to go in cache, then the bytes are what get stored.
+        val destination = File(context.cacheDir, "capture-${System.nanoTime()}.jpg")
         val options = ImageCapture.OutputFileOptions.Builder(destination).build()
         return try {
             suspendCancellableCoroutine { continuation ->
@@ -231,11 +245,19 @@ class FaceCameraSession(
         }
     }
 
-    fun release() {
+    /**
+     * Stops the preview without shutting down the analyser thread, so a retake can [bind] again.
+     * [release] is the one that ends the thread, and it is only safe once the screen is gone.
+     */
+    fun unbind() {
         runCatching { provider?.unbindAll() }
             .onFailure { logger.w(TAG, "Unbind failed", it) }
         provider = null
         imageCapture = null
+    }
+
+    fun release() {
+        unbind()
         analysisExecutor.shutdown()
     }
 

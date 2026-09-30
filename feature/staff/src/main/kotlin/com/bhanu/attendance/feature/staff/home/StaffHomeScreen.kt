@@ -22,8 +22,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -90,33 +90,25 @@ fun StaffHomeRoute(
             TopAppBar(
                 title = { Text(stringResource(R.string.staff_title)) },
                 actions = {
-                    Row {
-                        OutlinedButton(
-                            onClick = onOpenHistory,
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                                .testTag("staff_history_button"),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.History,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = stringResource(R.string.staff_history),
-                                modifier = Modifier.padding(start = 6.dp),
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = onSignOut,
-                            modifier = Modifier.padding(end = 12.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Logout,
-                                contentDescription = "Sign out",
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
+                    // IconButtons, not OutlinedButtons: two bordered buttons plus the title
+                    // crowd a 360dp TopAppBar and push the History action against the title.
+                    // Icon actions are the Material TopAppBar pattern and leave the title room.
+                    IconButton(
+                        onClick = onOpenHistory,
+                        modifier = Modifier.testTag("staff_history_button"),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.History,
+                            contentDescription = stringResource(R.string.staff_history),
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                    IconButton(onClick = onSignOut) {
+                        Icon(
+                            imageVector = Icons.Filled.Logout,
+                            contentDescription = "Sign out",
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
                 },
             )

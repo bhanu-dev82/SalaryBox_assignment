@@ -83,7 +83,10 @@ class FaceQualityEvaluator(private val thresholds: FaceThresholds) {
         return QualityVerdict(QualityIssue.OK, pose, true)
     }
 
-    /** Records the frame as the new motion reference. Only call for accepted frames. */
+    /** Records the frame as the new motion reference. Call for every evaluated frame,
+     * accepted or not, so motion compares against the immediately preceding frame.
+     * Comparing only against the last *accepted* frame would turn a small pose
+     * adjustment between samples into permanent "excessive motion". */
     fun remember(observation: FaceObservation) {
         previousLandmarks = observation.landmarks
     }

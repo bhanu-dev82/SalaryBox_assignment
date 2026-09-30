@@ -142,6 +142,7 @@ fun FaceGuideOverlay(
 fun CaptureHint(
     issue: QualityIssue,
     modifier: Modifier = Modifier,
+    color: Color = Color.White,
 ) {
     val message = when (issue) {
         QualityIssue.OK -> "Hold still"
@@ -163,7 +164,7 @@ fun CaptureHint(
     Text(
         text = message,
         style = MaterialTheme.typography.titleMedium,
-        color = Color.White,
+        color = color,
         textAlign = TextAlign.Center,
         modifier = modifier
             .fillMaxWidth()

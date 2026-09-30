@@ -112,9 +112,13 @@ class SelfieEncoder @Inject constructor() {
         } else {
             bitmap
         }
-        return java.io.ByteArrayOutputStream().use { out ->
-            scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
-            out.toByteArray()
+        return try {
+            java.io.ByteArrayOutputStream().use { out ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                out.toByteArray()
+            }
+        } finally {
+            if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
         }
     }
 }

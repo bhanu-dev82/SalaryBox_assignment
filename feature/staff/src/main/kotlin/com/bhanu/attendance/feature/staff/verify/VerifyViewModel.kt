@@ -13,15 +13,17 @@ import com.bhanu.attendance.domain.face.FaceThresholds
 import com.bhanu.attendance.domain.face.QualityIssue
 import com.bhanu.attendance.domain.face.VerificationProgress
 import com.bhanu.attendance.domain.face.VerificationSession
+import com.bhanu.attendance.data.storage.SelfieEncoder
+import com.bhanu.attendance.domain.model.GeoLocation
 import com.bhanu.attendance.domain.model.PunchType
 import com.bhanu.attendance.domain.model.Staff
 import com.bhanu.attendance.domain.outcome.AppError
 import com.bhanu.attendance.domain.outcome.Outcome
 import com.bhanu.attendance.domain.outcome.runCatchingOutcome
 import com.bhanu.attendance.domain.repository.FaceTemplateRepository
+import com.bhanu.attendance.domain.repository.LocationProvider
 import com.bhanu.attendance.domain.repository.SettingsRepository
 import com.bhanu.attendance.domain.repository.StaffRepository
-import com.bhanu.attendance.domain.time.TimeProvider
 import com.bhanu.attendance.domain.usecase.MarkPunchUseCase
 import com.bhanu.attendance.domain.usecase.RecordRejectedPunchUseCase
 import com.bhanu.attendance.domain.usecase.VerifiedPunch
@@ -32,7 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 
 /** Where the verification flow currently is. */
@@ -54,6 +56,7 @@ data class VerifyUiState(
     val stage: VerifyStage = VerifyStage.VERIFYING,
     val issue: QualityIssue = QualityIssue.POSITIONING,
     val matchedFrames: Int = 0,
+    val consideredFrames: Int = 0,
     val requiredMatches: Int = 3,
     val progress: Float = 0f,
     val bestScore: Double = 0.0,
@@ -61,7 +64,10 @@ data class VerifyUiState(
     val capturedJpeg: ByteArray? = null,
     val isRecording: Boolean = false,
     val error: AppError? = null,
-    val locationNote: String? = null,
+    /** Set once the punch row has been written. Null means no fix was stored. */
+    val savedLocation: GeoLocation? = null,
+    /** Bumped on retake so the camera binds again after a failed start. */
+    val cameraGeneration: Int = 0,
 ) {
     val isBusy: Boolean get() = isRecording
 }
@@ -84,8 +90,9 @@ class VerifyViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val markPunch: MarkPunchUseCase,
     private val recordRejected: RecordRejectedPunchUseCase,
-    private val timeProvider: TimeProvider,
+    private val locationProvider: LocationProvider,
     private val faceEngine: FaceEngine,
+    private val selfieEncoder: SelfieEncoder,
     private val logger: AppLogger,
 ) : ViewModel() {
 
@@ -96,6 +103,27 @@ class VerifyViewModel @Inject constructor(
     private var staff: Staff? = null
     private var cameraSession: FaceCameraSession? = null
     private var observeJob: Job? = null
+
+    /** JPEG of the frame currently being checked. Written before inference returns. */
+    private val latestFrameJpeg = AtomicReference<ByteArray?>(null)
+    private var lastJpegEncodeAt: Long = 0L
+
+    private var locationPrimed = false
+
+    /**
+     * Asks for a fix while the face check is still running.
+     *
+     * The punch reads location again when it is saved. This call only warms the radio,
+     * so a cold GPS is less likely to come back empty in the few seconds after confirm.
+     */
+    fun prepareLocation() {
+        if (locationPrimed) return
+        locationPrimed = true
+        viewModelScope.launch {
+            runCatching { locationProvider.currentLocation(LOCATION_WARMUP_MILLIS) }
+                .onFailure { logger.w(TAG, "Location warmup failed", it) }
+        }
+    }
 
     fun start(staffId: String, punchType: PunchType) {
         if (_state.value.staffId == staffId && verificationSession != null) return
@@ -150,10 +178,28 @@ class VerifyViewModel @Inject constructor(
     /**
      * A decoded, upright frame from the camera pipeline. Waits until inference finishes so
      * the bitmap is still alive when MediaPipe reads it.
+     *
+     * The punch photo is throttled, not encoded on every frame: JPEG compression of a 720p
+     * frame costs ~20-50ms on the analyser thread, and 99% of those bytes are discarded
+     * because only the accepted frames matter. Encoding at most once per 300ms still leaves
+     * a photo within 300ms of acceptance — same person, same light — while cutting the
+     * per-frame cost by roughly two thirds at typical inference rates.
      */
     suspend fun onAnalysedBitmap(bitmap: android.graphics.Bitmap) {
         val decimated = faceEngine.decimate(bitmap, FaceCameraSession.ANALYSIS_MAX_DIMENSION)
         try {
+            if (_state.value.stage == VerifyStage.VERIFYING && !decimated.isRecycled) {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastJpegEncodeAt >= JPEG_THROTTLE_MILLIS) {
+                    val jpeg = runCatching {
+                        selfieEncoder.encode(decimated, maxDimension = 960, quality = 80)
+                    }.getOrNull()
+                    if (jpeg != null && jpeg.isNotEmpty()) {
+                        latestFrameJpeg.set(jpeg)
+                        lastJpegEncodeAt = now
+                    }
+                }
+            }
             val luma = faceEngine.meanLuma(decimated)
             faceEngine.submit(decimated, luma)
         } finally {
@@ -180,10 +226,30 @@ class VerifyViewModel @Inject constructor(
             faceEngine.observations.collect { result ->
                 when (result) {
                     is FaceFrameResult.Detected -> onFrame(result.observation, result.faceCount)
-                    FaceFrameResult.NoFace ->
-                        _state.update { it.copy(issue = QualityIssue.FACE_TOO_SMALL, matchedFrames = 0) }
+                    FaceFrameResult.NoFace -> onNoFace()
                 }
             }
+        }
+    }
+
+    private fun onNoFace() {
+        val session = verificationSession
+        if (_state.value.stage != VerifyStage.VERIFYING) return
+        if (session == null) {
+            _state.update { it.copy(issue = QualityIssue.FACE_TOO_SMALL) }
+            return
+        }
+        // Feed the gap into the session so a stale streak cannot survive a walk-away.
+        val progress = session.onNoFace()
+        _state.update {
+            it.copy(
+                issue = progress.lastIssue,
+                matchedFrames = progress.matchedFrames,
+                consideredFrames = progress.consideredFrames,
+                requiredMatches = progress.requiredMatches,
+                progress = progress.fraction,
+                bestScore = progress.bestScore,
+            )
         }
     }
 
@@ -197,39 +263,26 @@ class VerifyViewModel @Inject constructor(
             current.copy(
                 issue = progress.lastIssue,
                 matchedFrames = progress.matchedFrames,
+                consideredFrames = progress.consideredFrames,
                 requiredMatches = progress.requiredMatches,
                 progress = progress.fraction,
                 bestScore = progress.bestScore,
             )
         }
         if (progress.isAccepted) {
-            captureSelfie()
-        }
-    }
-
-    private fun captureSelfie() {
-        val session = cameraSession ?: run {
-            failWith(AppError.Unexpected("The camera is not ready", null))
-            return
-        }
-        if (_state.value.capturedJpeg != null) return
-
-        viewModelScope.launch {
-            val destination = File(timeProvider.now().toEpochMilli().toString() + "-capture.jpg")
-            val jpeg = runCatching { session.captureJpeg(destination) }.getOrNull()
+            val jpeg = latestFrameJpeg.get()
             if (jpeg == null || jpeg.isEmpty()) {
-                // Verification succeeded but the photo did not. Rather than silently recording
-                // a punch with no evidence, say so and let the person try again.
-                logger.w(TAG, "Selfie capture produced no bytes")
+                logger.w(TAG, "Matched face had no photo bytes")
                 failWith(AppError.SelfieWriteFailed)
-                return@launch
-            }
-            _state.update {
-                it.copy(
-                    stage = VerifyStage.AWAITING_CONFIRMATION,
-                    capturedJpeg = jpeg,
-                    issue = QualityIssue.OK,
-                )
+            } else {
+                _state.update {
+                    it.copy(
+                        stage = VerifyStage.AWAITING_CONFIRMATION,
+                        capturedJpeg = jpeg,
+                        issue = QualityIssue.OK,
+                        error = null,
+                    )
+                }
             }
         }
     }
@@ -247,11 +300,19 @@ class VerifyViewModel @Inject constructor(
                 selfieJpeg = jpeg,
                 matchScore = current.bestScore,
                 matchedFrames = current.matchedFrames,
-                consideredFrames = _state.value.requiredMatches.coerceAtLeast(current.matchedFrames),
+                consideredFrames = current.consideredFrames.coerceAtLeast(current.matchedFrames)
+                    .coerceAtLeast(1),
             )
             when (val outcome = markPunch(person, verified)) {
                 is Outcome.Success -> {
-                    _state.update { it.copy(isRecording = false, stage = VerifyStage.RECORDED) }
+                    _state.update {
+                        it.copy(
+                            isRecording = false,
+                            stage = VerifyStage.RECORDED,
+                            savedLocation = outcome.value.location,
+                            error = null,
+                        )
+                    }
                 }
 
                 is Outcome.Failure -> {
@@ -276,14 +337,20 @@ class VerifyViewModel @Inject constructor(
 
     private fun resetForRetry() {
         verificationSession?.reset()
+        latestFrameJpeg.set(null)
+        lastJpegEncodeAt = 0L
         _state.update { current ->
             current.copy(
                 stage = VerifyStage.VERIFYING,
                 issue = QualityIssue.POSITIONING,
                 matchedFrames = 0,
+                consideredFrames = 0,
                 progress = 0f,
+                bestScore = 0.0,
                 capturedJpeg = null,
                 isRecording = false,
+                savedLocation = null,
+                cameraGeneration = current.cameraGeneration + 1,
                 error = null,
             )
         }
@@ -329,5 +396,8 @@ class VerifyViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "Verify"
+        const val LOCATION_WARMUP_MILLIS = 15_000L
+        /** At most one punch-photo encode per window; see onAnalysedBitmap. */
+        const val JPEG_THROTTLE_MILLIS = 300L
     }
 }
