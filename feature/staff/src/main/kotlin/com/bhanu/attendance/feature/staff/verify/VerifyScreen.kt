@@ -1,7 +1,9 @@
 package com.bhanu.attendance.feature.staff.verify
 
 import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.core.content.ContextCompat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -88,10 +90,36 @@ fun VerifyRoute(
             if (!granted) viewModel.onPermissionDenied()
         },
     )
+    // Location is part of the attendance record. Denying it still records the punch;
+    // the stored fix is then absent rather than invented.
+    var askedForLocation by remember { mutableStateOf(false) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { },
+    )
 
     LaunchedEffect(staffId, punchType) {
         viewModel.start(staffId, punchType)
         viewModel.observeFrames()
+    }
+
+    LaunchedEffect(hasPermission) {
+        if (!hasPermission || askedForLocation) return@LaunchedEffect
+        askedForLocation = true
+        val fine = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+        }
     }
 
     val session = remember(staffId) { viewModel.createCameraSession(context.applicationContext) }
@@ -151,9 +179,13 @@ fun VerifyRoute(
                 }
                 Text(
                     text = when (state.stage) {
-                        VerifyStage.VERIFYING -> stringResource(R.string.staff_verify_title)
+                        VerifyStage.VERIFYING -> if (punchType == PunchType.PUNCH_IN) {
+                            "Punch in"
+                        } else {
+                            "Punch out"
+                        }
                         VerifyStage.AWAITING_CONFIRMATION -> stringResource(R.string.staff_verified)
-                        VerifyStage.RECORDED -> stringResource(R.string.staff_verified)
+                        VerifyStage.RECORDED -> "Punch recorded"
                     },
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
@@ -173,10 +205,7 @@ fun VerifyRoute(
 
                     VerifyStage.AWAITING_CONFIRMATION -> ConfirmPane(
                         state = state,
-                        onConfirm = {
-                            viewModel.confirm()
-                            onRecorded(state.punchType)
-                        },
+                        onConfirm = viewModel::confirm,
                         onRetry = viewModel::retry,
                     )
 
@@ -207,6 +236,8 @@ private fun VerifyProgressPane(state: VerifyUiState) {
     ) {
         LinearProgressIndicator(
             progress = { state.progress },
+            color = Color.White,
+            trackColor = Color.White.copy(alpha = 0.25f),
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics {
@@ -215,7 +246,7 @@ private fun VerifyProgressPane(state: VerifyUiState) {
                 },
         )
         Text(
-            text = "Matched $state.matchedFrames of $state.requiredMatches checks",
+            text = "Matched ${state.matchedFrames} of ${state.requiredMatches} checks",
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White,
             modifier = Modifier.padding(vertical = 8.dp),

@@ -289,7 +289,7 @@ aapt2 dump permissions app/build/outputs/apk/debug/app-debug.apk
 ./gradlew test
 ```
 
-56 JVM unit tests, no device required:
+57 JVM unit tests, no device required:
 
 | Suite | Tests | What it guards |
 |---|---|---|
@@ -300,6 +300,7 @@ aapt2 dump permissions app/build/outputs/apk/debug/app-debug.apk
 | `GeofenceTest` | 8 | Haversine, inside/outside, missing-fix handling |
 | `ValidatorsTest` | 13 | PIN/name/employee-ID rules |
 | `OutcomeTest` | 6 | Typed errors; `CancellationException` must not be swallowed |
+| `DescriptorStorageTest` | 1 | An enrolled face round-trips as bytes and is not stored empty |
 
 The most important of these is `FaceDiscriminationTest`. An earlier version of the test
 fixture reported a separation of **0.004 with overlap** — i.e. a face check that would have

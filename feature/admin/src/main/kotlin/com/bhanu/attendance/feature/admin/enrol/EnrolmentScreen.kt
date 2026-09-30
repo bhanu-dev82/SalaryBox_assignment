@@ -52,6 +52,7 @@ import com.bhanu.attendance.core.designsystem.component.CaptureHint
 import com.bhanu.attendance.core.designsystem.component.ErrorCard
 import com.bhanu.attendance.core.designsystem.component.FaceGuideOverlay
 import com.bhanu.attendance.core.designsystem.theme.BhanuTheme
+import com.bhanu.attendance.domain.face.QualityIssue
 import com.bhanu.attendance.feature.admin.R
 
 /**
@@ -124,7 +125,7 @@ fun EnrolmentRoute(
             }
 
             FaceGuideOverlay(
-                issue = state.currentIssue,
+                issue = if (state.isSaved) QualityIssue.OK else state.currentIssue,
                 progress = state.fraction,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -155,6 +156,8 @@ fun EnrolmentRoute(
                             // it a screen-reader user gets no feedback at all until the end.
                             LinearProgressIndicator(
                                 progress = { state.fraction },
+                                color = Color.White,
+                                trackColor = Color.White.copy(alpha = 0.25f),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .semantics {

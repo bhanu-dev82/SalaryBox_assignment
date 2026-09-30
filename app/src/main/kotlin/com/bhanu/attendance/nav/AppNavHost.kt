@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -54,7 +55,11 @@ fun AppNavHost(
         return
     }
 
-    val startDestination = if (ui.isSignedIn) homeFor(ui.role) else Destination.Login.route
+    // Frozen once the stored session has loaded. Recomputing it on later sign-in would
+    // rebuild the graph and throw away the screen the user is on.
+    val startDestination = remember(ui.isLoaded) {
+        if (ui.isSignedIn) homeFor(ui.role) else Destination.Login.route
+    }
 
     NavHost(
         navController = navController,
@@ -79,11 +84,8 @@ fun AppNavHost(
 
         composable(Destination.StaffHome.route) {
             StaffHomeRoute(
-                onOpenVerification = { punchType ->
-                    val staffId = ui.staffId
-                    if (staffId != null) {
-                        navController.navigate(Destination.Verify.createRoute(staffId, punchType))
-                    }
+                onOpenVerification = { staffId, punchType ->
+                    navController.navigate(Destination.Verify.createRoute(staffId, punchType))
                 },
                 onOpenHistory = { navController.navigate(Destination.StaffHistory.route) },
                 onSignOut = {
@@ -109,9 +111,9 @@ fun AppNavHost(
         composable(Destination.AdminStaff.route) {
             StaffListRoute(
                 onSelectStaff = { /* the list-detail pane split is handled inside the screen */ },
-                onOpenEnrolment = { staffId ->
+                onOpenEnrolment = { staffId, name ->
                     navController.navigate(
-                        Destination.AdminEnrolment.createRoute(staffId, "Staff member")
+                        Destination.AdminEnrolment.createRoute(staffId, name)
                     )
                 },
                 onShowMessage = { /* snackbars are owned by the screen */ },
@@ -143,7 +145,10 @@ fun AppNavHost(
             route = Destination.Verify.route,
             arguments = listOf(
                 navArgument(Destination.Verify.ARG_STAFF_ID) { type = NavType.StringType },
-                navArgument(Destination.Verify.ARG_PUNCH) { type = NavType.StringType },
+                navArgument(Destination.Verify.ARG_PUNCH) {
+                    type = NavType.StringType
+                    defaultValue = PunchType.PUNCH_IN.name
+                },
             ),
         ) { entry ->
             val staffId = entry.arguments?.getString(Destination.Verify.ARG_STAFF_ID).orEmpty()

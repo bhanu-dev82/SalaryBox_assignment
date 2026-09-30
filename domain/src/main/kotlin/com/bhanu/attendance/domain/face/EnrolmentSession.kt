@@ -76,7 +76,7 @@ class EnrolmentSession(
 
         if (!sufficientlyDifferent && !relaxed) {
             staleFrames++
-            return progress(QualityIssue.EXCESSIVE_MOTION)
+            return progress(QualityIssue.NEED_DIFFERENT_POSE)
         }
         staleFrames = 0
 

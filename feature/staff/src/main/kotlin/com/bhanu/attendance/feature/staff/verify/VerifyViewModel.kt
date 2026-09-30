@@ -26,6 +26,7 @@ import com.bhanu.attendance.domain.usecase.MarkPunchUseCase
 import com.bhanu.attendance.domain.usecase.RecordRejectedPunchUseCase
 import com.bhanu.attendance.domain.usecase.VerifiedPunch
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,7 +52,7 @@ data class VerifyUiState(
     val staffName: String = "",
     val punchType: PunchType = PunchType.PUNCH_IN,
     val stage: VerifyStage = VerifyStage.VERIFYING,
-    val issue: QualityIssue = QualityIssue.FACE_TOO_SMALL,
+    val issue: QualityIssue = QualityIssue.POSITIONING,
     val matchedFrames: Int = 0,
     val requiredMatches: Int = 3,
     val progress: Float = 0f,
@@ -94,6 +95,7 @@ class VerifyViewModel @Inject constructor(
     private var verificationSession: VerificationSession? = null
     private var staff: Staff? = null
     private var cameraSession: FaceCameraSession? = null
+    private var observeJob: Job? = null
 
     fun start(staffId: String, punchType: PunchType) {
         if (_state.value.staffId == staffId && verificationSession != null) return
@@ -107,7 +109,7 @@ class VerifyViewModel @Inject constructor(
                 _state.update { it.copy(error = AppError.StaffNotFound(staffId)) }
                 return@launch
             }
-            if (template == null) {
+            if (template == null || template.descriptor.isEmpty()) {
                 _state.update {
                     it.copy(staffId = staffId, staffName = person.name, error = AppError.NotEnrolled)
                 }
@@ -145,13 +147,18 @@ class VerifyViewModel @Inject constructor(
         }
     }
 
-    /** A decoded frame handed over by the camera pipeline. */
-    fun onAnalysedBitmap(bitmap: android.graphics.Bitmap) {
-        viewModelScope.launch {
-            val decimated = faceEngine.decimate(bitmap, FaceCameraSession.ANALYSIS_MAX_DIMENSION)
+    /**
+     * A decoded, upright frame from the camera pipeline. Waits until inference finishes so
+     * the bitmap is still alive when MediaPipe reads it.
+     */
+    suspend fun onAnalysedBitmap(bitmap: android.graphics.Bitmap) {
+        val decimated = faceEngine.decimate(bitmap, FaceCameraSession.ANALYSIS_MAX_DIMENSION)
+        try {
             val luma = faceEngine.meanLuma(decimated)
             faceEngine.submit(decimated, luma)
-            if (decimated !== bitmap) bitmap.recycle()
+        } finally {
+            if (decimated !== bitmap && !decimated.isRecycled) decimated.recycle()
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
 
@@ -161,7 +168,15 @@ class VerifyViewModel @Inject constructor(
         }
 
     fun observeFrames() {
-        viewModelScope.launch {
+        if (observeJob?.isActive == true) return
+        observeJob = viewModelScope.launch {
+            when (val ready = faceEngine.initialise()) {
+                is Outcome.Failure -> {
+                    _state.update { it.copy(error = ready.error) }
+                    return@launch
+                }
+                is Outcome.Success -> Unit
+            }
             faceEngine.observations.collect { result ->
                 when (result) {
                     is FaceFrameResult.Detected -> onFrame(result.observation, result.faceCount)
@@ -264,7 +279,7 @@ class VerifyViewModel @Inject constructor(
         _state.update { current ->
             current.copy(
                 stage = VerifyStage.VERIFYING,
-                issue = QualityIssue.FACE_TOO_SMALL,
+                issue = QualityIssue.POSITIONING,
                 matchedFrames = 0,
                 progress = 0f,
                 capturedJpeg = null,

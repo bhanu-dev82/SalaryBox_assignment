@@ -19,8 +19,16 @@ class FaceTemplateRepositoryImpl @Inject constructor(
     private val timeProvider: TimeProvider,
 ) : FaceTemplateRepository {
 
-    override suspend fun get(staffId: String): FaceTemplate? =
-        faceTemplateDao.get(staffId)?.toDomain()
+    override suspend fun get(staffId: String): FaceTemplate? {
+        val template = faceTemplateDao.get(staffId)?.toDomain() ?: return null
+        if (template.descriptor.isEmpty()) {
+            // An empty blob cannot be matched. Drop it so the caller treats the person as
+            // not enrolled instead of crashing while building a descriptor.
+            delete(staffId)
+            return null
+        }
+        return template
+    }
 
     /**
      * Stores the template and stamps the staff row.

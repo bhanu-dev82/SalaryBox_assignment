@@ -66,7 +66,7 @@ import com.bhanu.attendance.feature.staff.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StaffHomeRoute(
-    onOpenVerification: (PunchType) -> Unit,
+    onOpenVerification: (staffId: String, punchType: PunchType) -> Unit,
     onOpenHistory: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
@@ -78,7 +78,7 @@ fun StaffHomeRoute(
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
             when (event) {
-                is StaffHomeEvent.OpenVerification -> onOpenVerification(event.punchType)
+                is StaffHomeEvent.OpenVerification -> onOpenVerification(event.staffId, event.punchType)
                 is StaffHomeEvent.ShowMessage -> snackbarHostState.showSnackbar(event.message)
             }
         }
@@ -184,10 +184,13 @@ private fun StaffHomeContent(
                 modifier = Modifier.size(20.dp),
             )
             Text(
-                text = when (state.nextPunch) {
-                    PunchType.PUNCH_IN -> stringResource(R.string.staff_punch_in)
-                    PunchType.PUNCH_OUT -> stringResource(R.string.staff_punch_out)
-                    null -> stringResource(R.string.staff_shift_complete)
+                text = when {
+                    // Blocked is not "done for the day". The chip above says why; the button
+                    // stays the action they will take once that is resolved.
+                    blocked != null -> stringResource(R.string.staff_punch_in)
+                    state.nextPunch == PunchType.PUNCH_IN -> stringResource(R.string.staff_punch_in)
+                    state.nextPunch == PunchType.PUNCH_OUT -> stringResource(R.string.staff_punch_out)
+                    else -> stringResource(R.string.staff_shift_complete)
                 },
                 modifier = Modifier.padding(start = 8.dp),
             )

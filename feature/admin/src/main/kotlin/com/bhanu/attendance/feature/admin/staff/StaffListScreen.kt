@@ -96,7 +96,7 @@ import androidx.activity.compose.BackHandler
 @Composable
 fun StaffListRoute(
     onSelectStaff: (String?) -> Unit,
-    onOpenEnrolment: (String) -> Unit,
+    onOpenEnrolment: (staffId: String, staffName: String) -> Unit,
     onShowMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: StaffListViewModel = hiltViewModel(),
@@ -127,7 +127,7 @@ fun StaffListRoute(
                 // The pin-reset target is state now, so the event is a no-op here.
                 is StaffListEvent.ShowPinReset -> viewModel.openPinReset(event.staffId)
                 is StaffListEvent.OpenEnrolment ->
-                    detail.staff?.let { onOpenEnrolment(it.id) }
+                    detail.staff?.let { onOpenEnrolment(it.id, it.name) }
             }
         }
     }
@@ -138,7 +138,7 @@ fun StaffListRoute(
         BackHandler { viewModel.selectStaff(null) }
         StaffDetailPane(
             state = detail,
-            onEnrolFace = { detail.staff?.let { onOpenEnrolment(it.id) } },
+            onEnrolFace = { detail.staff?.let { onOpenEnrolment(it.id, it.name) } },
             onResetPin = { detail.staff?.let { viewModel.openPinReset(it.id) } },
             onToggleActive = { active -> detail.staff?.let { viewModel.setActive(it.id, active) } },
             onBack = { viewModel.selectStaff(null) },
@@ -182,7 +182,7 @@ fun StaffListRoute(
 
             StaffDetailPane(
                 state = detail,
-                onEnrolFace = { detail.staff?.let { onOpenEnrolment(it.id) } },
+                onEnrolFace = { detail.staff?.let { onOpenEnrolment(it.id, it.name) } },
                 onResetPin = { detail.staff?.let { viewModel.openPinReset(it.id) } },
                 onToggleActive = { active -> detail.staff?.let { viewModel.setActive(it.id, active) } },
                 modifier = Modifier.weight(1f - LIST_PANE_WEIGHT),

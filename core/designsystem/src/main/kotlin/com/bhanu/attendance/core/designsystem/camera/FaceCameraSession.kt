@@ -3,8 +3,12 @@ package com.bhanu.attendance.core.designsystem.camera
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -18,11 +22,11 @@ import androidx.core.content.ContextCompat
 import com.bhanu.attendance.core.common.logging.AppLogger
 import com.bhanu.attendance.data.face.FaceEngine
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -42,10 +46,10 @@ sealed interface CameraFailure {
  *
  * ### Back-pressure
  *
- * `STRATEGY_KEEP_ONLY_LATEST` plus an [AtomicBoolean] guard means at most one frame is in
- * flight. If inference is slower than the camera, frames are **dropped**, not queued —
- * queueing grows without bound and eventually OOMs a cheap handset. The same applies to
- * `ImageProxy`: it must be closed exactly once per frame or the whole pipeline stalls.
+ * The analyser does not close the [ImageProxy] until inference for that frame has finished.
+ * `STRATEGY_KEEP_ONLY_LATEST` then drops every frame that arrived meanwhile, so a slow
+ * device cannot queue bitmaps until it runs out of memory. The proxy is still closed
+ * exactly once, including when decode or inference throws.
  */
 class FaceCameraSession(
     private val context: Context,
@@ -54,7 +58,6 @@ class FaceCameraSession(
 ) {
     /** Camera frames arrive here on a dedicated thread, never the main thread. */
     val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-    private val inFlight = AtomicBoolean(false)
 
     private var provider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
@@ -77,7 +80,7 @@ class FaceCameraSession(
      */
     suspend fun bind(
         lifecycleOwner: androidx.lifecycle.LifecycleOwner,
-        onFrame: (android.graphics.Bitmap) -> Unit,
+        onFrame: suspend (Bitmap) -> Unit,
         onFailure: (CameraFailure) -> Unit,
     ) {
         val cameraProvider = try {
@@ -94,10 +97,19 @@ class FaceCameraSession(
             return
         }
 
-        val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        // Sensor buffers are landscape. rotationDegrees is how far to turn them so they
+        // match this target. Without it, MediaPipe is shown a sideways face and reports
+        // that no face is present.
+        val rotation = previewView.display?.rotation ?: Surface.ROTATION_0
+
+        val preview = Preview.Builder()
+            .setTargetRotation(rotation)
+            .build()
+            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setTargetRotation(rotation)
             // 720p is ample for landmark detection and far cheaper than 1080p on a low-end
             // handset, where this runs continuously.
             .setResolutionSelector(
@@ -114,25 +126,22 @@ class FaceCameraSession(
             .build()
 
         analysis.setAnalyzer(analysisExecutor) { imageProxy ->
-            if (!inFlight.compareAndSet(false, true)) {
-                imageProxy.close()
-                return@setAnalyzer
-            }
             try {
-                // toBitmap() is a default method in CameraX 1.6.2 that handles the crop
-                // rect and row/pixel strides, so no hand-rolled stride maths is needed.
-                runCatching { imageProxy.toBitmap() }
-                    .onSuccess(onFrame)
-                    .onFailure { logger.w(TAG, "Frame decode failed", it) }
+                // The proxy stays open until inference returns. KEEP_ONLY_LATEST then
+                // drops everything that arrived meanwhile, instead of queueing bitmaps.
+                val upright = uprightBitmap(imageProxy) ?: return@setAnalyzer
+                runBlocking { onFrame(upright) }
+            } catch (t: Throwable) {
+                logger.w(TAG, "Frame analysis failed", t)
             } finally {
                 imageProxy.close()
-                inFlight.set(false)
             }
         }
 
         val capture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(ImageCapture.FLASH_MODE_OFF)
+            .setTargetRotation(rotation)
             .build()
         imageCapture = capture
 
@@ -196,6 +205,29 @@ class FaceCameraSession(
             null
         } finally {
             runCatching { destination.delete() }
+        }
+    }
+
+    /**
+     * `ImageProxy.toBitmap()` copies pixels but does **not** apply [ImageProxy.getImageInfo]
+     * rotation. BlazeFace is trained on upright faces, so a 90° or 270° sensor buffer comes
+     * back as "no face" on a phone held in portrait.
+     */
+    private fun uprightBitmap(imageProxy: ImageProxy): Bitmap? {
+        val raw = runCatching { imageProxy.toBitmap() }.getOrElse {
+            logger.w(TAG, "Frame decode failed", it)
+            return null
+        }
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        if (rotation == 0) return raw
+        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        return runCatching {
+            Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true)
+        }.onSuccess { rotated ->
+            if (rotated !== raw) raw.recycle()
+        }.getOrElse {
+            logger.w(TAG, "Frame rotate failed", it)
+            raw
         }
     }
 

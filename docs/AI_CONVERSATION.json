@@ -206,6 +206,44 @@
       "finding": "aapt2 on the built APK shows INTERNET and ACCESS_NETWORK_STATE present, arriving transitively via mediapipe -> media3-common -> datatransport (Google CCT telemetry), not from any code in this repository.",
       "decision": "Did not remove them with tools:node=\"remove\", because that risks a runtime SecurityException from Play services location that could not be verified on a device at the time. Documented the exact dependency chain and the one-line fix in README section 8 instead.",
       "principle": "An unverified privacy guarantee is worse than a documented limitation. Claiming a property I had not checked would have been the worst possible bug in a submission whose differentiator is error handling."
+    },
+    {
+      "turn": 12,
+      "role": "user",
+      "content": "After enrolling EMP002 (Priya Sharma) and signing in as that employee, Punch in did nothing. During enrolment the oval stayed red even though capture was succeeding, which read as an error. Asked to make both screens behave, finish the assignment, and push to git@github.com:bhanu-dev82/SalaryBox_assignment.git."
+    },
+    {
+      "turn": 13,
+      "role": "assistant",
+      "action": "device_debug_of_punch_and_enrolment",
+      "defects_found_by_running": [
+        {
+          "defect": "Enrolment always said the face was not found.",
+          "root_cause": "FaceEngine.initialise() was never called, CameraX ImageProxy.toBitmap() frames were not rotated by rotationDegrees, and the observation stored mean luma as 0 so the lighting gate rejected every detection.",
+          "fix": "Initialise the landmarker on a HandlerThread, rotate frames upright, and attach the measured luma to the observation."
+        },
+        {
+          "defect": "Punch in did nothing after a successful enrolment.",
+          "root_cause": "SessionViewModel read the session flow and discarded it, so navigation saw a null staff id and returned. Staff home still rendered because it collects the repository flow directly.",
+          "fix": "The session is stored, and Punch in navigates with the staff id carried on the event."
+        },
+        {
+          "defect": "Opening the face check then crashed the app.",
+          "root_cause": "FloatArray.toByteBuffer() wrote through asFloatBuffer() and then called flip(). The view does not advance the byte buffer position, so flip() published an empty blob. FaceDescriptor.of rejected that empty vector.",
+          "fix": "Stop flipping the buffer. On launch, delete empty templates and clear the enrolled flag so the person can be enrolled again. Verification refuses an empty descriptor instead of crashing.",
+          "device_evidence": "logcat FATAL at VerificationSession.<init> via FaceDescriptor.of, then after the fix: 'Removed 1 empty face template(s)'. Priya's home then showed 'Your face is not enrolled yet'."
+        },
+        {
+          "defect": "The enrolment oval stayed red while capture was fine.",
+          "root_cause": "Every quality state other than OK was drawn in the error colour, including 'move closer' and the pose-diversity prompt, which was also mislabelled as 'hold still'.",
+          "fix": "Green is a good frame, white is still searching, amber is coaching, red is only another face in frame. Pose diversity says 'Good — turn your head slightly'."
+        },
+        {
+          "defect": "With no face enrolled, the disabled button said 'Today's shift is complete'.",
+          "root_cause": "A blocked punch and a finished shift both have no next punch type, and the button used that absence as the complete label.",
+          "fix": "A blocked punch keeps the Punch in label. The chip above states the reason."
+        }
+      ]
     }
   ],
 
@@ -215,7 +253,7 @@
     "installed_on": "Samsung Galaxy S21 (SM-S921W), Android 16 / API 36, over USB via adb",
     "package": "com.bhanu.attendance (applicationIdSuffix removed from the debug build so the installed package matches the assignment exactly)",
     "release_apk_size": "53 MB, dominated by MediaPipe native libraries for four ABIs. ABI splits or an App Bundle would reduce this substantially.",
-    "defects_found_and_fixed": 11,
+    "defects_found_and_fixed": 16,
     "defects_a_compiler_would_have_caught": 0,
     "comment": "Every defect in this list was found by running a test or the app, not by compiling. The four most serious - a meaningless match threshold, an enrolment that could never complete, a hinge-less hinge bug, and a loading state that could never resolve - were all invisible to a successful build."
   }

@@ -29,6 +29,7 @@ class DatabaseSeeder @Inject constructor(
     private val logger: AppLogger,
 ) {
     suspend fun seedIfEmpty() {
+        repairEmptyFaceTemplates()
         runCatching {
             if (database.staffDao().countAll() > 0) {
                 logger.d(TAG, "Skipping seed: staff table is not empty")
@@ -63,6 +64,26 @@ class DatabaseSeeder @Inject constructor(
                 logger.i(TAG, "Seeded admin and ${demoStaff(now).size} demo staff")
             }
         }.onFailure { logger.e(TAG, "Seeding failed", it) }
+    }
+
+    /**
+     * Drops face rows whose descriptor blob is empty and clears the enrolled flag.
+     *
+     * Those rows were written when the byte buffer was flipped after a view write, so the
+     * person looked enrolled while punch-in had nothing to compare against.
+     */
+    private suspend fun repairEmptyFaceTemplates() {
+        runCatching {
+            val ids = database.faceTemplateDao().staffIdsWithEmptyDescriptor()
+            if (ids.isEmpty()) return
+            database.withTransaction {
+                for (id in ids) {
+                    database.faceTemplateDao().delete(id)
+                    database.staffDao().setFaceEnrolledAt(id, null)
+                }
+            }
+            logger.i(TAG, "Removed ${ids.size} empty face template(s)")
+        }.onFailure { logger.e(TAG, "Could not repair empty face templates", it) }
     }
 
     private fun demoStaff(now: Instant): List<StaffEntity> = listOf(

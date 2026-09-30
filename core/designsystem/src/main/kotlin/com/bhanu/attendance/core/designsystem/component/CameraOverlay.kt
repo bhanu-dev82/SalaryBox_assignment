@@ -20,6 +20,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.bhanu.attendance.domain.face.FaceObservation
 import com.bhanu.attendance.domain.face.FacePoseEstimator
@@ -48,10 +49,7 @@ fun FaceGuideOverlay(
         label = "enrolment-progress",
     )
     val guideColor by animateColorAsState(
-        targetValue = when (issue) {
-            QualityIssue.OK -> Color(0xFF2E7D32)
-            else -> Color(0xFFB3261E)
-        },
+        targetValue = guideColorFor(issue),
         label = "guide-color",
     )
 
@@ -147,6 +145,8 @@ fun CaptureHint(
 ) {
     val message = when (issue) {
         QualityIssue.OK -> "Hold still"
+        QualityIssue.POSITIONING -> "Position your face in the oval"
+        QualityIssue.NEED_DIFFERENT_POSE -> "Good — turn your head slightly"
         QualityIssue.LANDMARK_COUNT_INVALID -> "Your face could not be detected — try again"
         QualityIssue.FACE_TOO_SMALL -> "Move a little closer"
         QualityIssue.FACE_TOO_LARGE -> "Move a little further back"
@@ -163,11 +163,23 @@ fun CaptureHint(
     Text(
         text = message,
         style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurface,
+        color = Color.White,
+        textAlign = TextAlign.Center,
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp),
     )
+}
+
+/**
+ * Green means this frame is good. Amber is coaching. Red is only a real problem
+ * (someone else in frame). A red ring on "move closer" or "turn your head" reads as a failure.
+ */
+private fun guideColorFor(issue: QualityIssue): Color = when (issue) {
+    QualityIssue.OK -> Color(0xFF2E7D32)
+    QualityIssue.MULTIPLE_FACES -> Color(0xFFB3261E)
+    QualityIssue.POSITIONING -> Color.White
+    else -> Color(0xFFFFC107)
 }
 
 /** Vertical stack for the guidance text above and below the camera preview. */

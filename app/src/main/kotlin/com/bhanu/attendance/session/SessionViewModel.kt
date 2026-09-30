@@ -46,13 +46,19 @@ class SessionViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            // An explicit read resolves the "not loaded yet" ambiguity on launch, so the app
-            // never shows the login screen to someone who is already signed in.
+            // The flow is the session. Reading it and discarding the value left `session`
+            // null forever, so staff home could render (it watches the repository directly)
+            // while navigation still saw no staff id and ignored Punch in.
             //
             // The catch matters: if the read throws, the app must still leave the loading
             // state, otherwise a corrupt preferences file bricks the app on every launch.
-            runCatching { authRepository.currentSession() }
-            _state.update { it.copy(isLoaded = true) }
+            runCatching {
+                authRepository.session.collect { session ->
+                    _state.value = SessionUiState(session = session, isLoaded = true)
+                }
+            }.onFailure {
+                _state.update { it.copy(isLoaded = true) }
+            }
         }
     }
 

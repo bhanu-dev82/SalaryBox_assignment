@@ -39,6 +39,10 @@ data class FacePose(
 /** Why a frame was rejected. Drives the on-screen coaching text. */
 enum class QualityIssue {
     OK,
+    /** Camera is up and no verdict has arrived yet. Not a failure. */
+    POSITIONING,
+    /** Another sample is needed from a slightly different angle. Not a failure. */
+    NEED_DIFFERENT_POSE,
     LANDMARK_COUNT_INVALID,
     FACE_TOO_SMALL,
     FACE_TOO_LARGE,

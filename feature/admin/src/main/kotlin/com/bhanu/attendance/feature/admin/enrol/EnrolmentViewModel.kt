@@ -20,6 +20,7 @@ import com.bhanu.attendance.domain.repository.SettingsRepository
 import com.bhanu.attendance.domain.time.TimeProvider
 import com.bhanu.attendance.domain.usecase.RecordEnrolmentAuditUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,7 +33,7 @@ data class EnrolmentUiState(
     val staffName: String = "",
     val accepted: Int = 0,
     val target: Int = 5,
-    val currentIssue: QualityIssue = QualityIssue.LANDMARK_COUNT_INVALID,
+    val currentIssue: QualityIssue = QualityIssue.POSITIONING,
     val isComplete: Boolean = false,
     val isSaving: Boolean = false,
     val isSaved: Boolean = false,
@@ -71,6 +72,7 @@ class EnrolmentViewModel @Inject constructor(
     private var session: EnrolmentSession? = null
     private var thresholds: FaceThresholds = FaceThresholds()
     private var actorId: String = "admin"
+    private var observeJob: Job? = null
 
     fun start(staffId: String, staffName: String, adminId: String) {
         if (session != null && _state.value.staffId == staffId) return
@@ -93,7 +95,15 @@ class EnrolmentViewModel @Inject constructor(
      * write — thread-safe — and the composable collects on the main thread.
      */
     fun observeFrames() {
-        viewModelScope.launch {
+        if (observeJob?.isActive == true) return
+        observeJob = viewModelScope.launch {
+            when (val ready = faceEngine.initialise()) {
+                is Outcome.Failure -> {
+                    _state.update { it.copy(error = ready.error) }
+                    return@launch
+                }
+                is Outcome.Success -> Unit
+            }
             faceEngine.observations.collect { result ->
                 when (result) {
                     is FaceFrameResult.Detected -> onFrame(result.observation, result.faceCount)
@@ -184,12 +194,21 @@ class EnrolmentViewModel @Inject constructor(
     fun createCameraSession(context: android.content.Context): FaceCameraSession =
         FaceCameraSession(context = context, faceEngine = faceEngine, logger = logger)
 
-    /** A frame the screen can hand straight to the analyser. */
-    fun submitBitmap(bitmap: Bitmap) {
-        viewModelScope.launch {
-            val decimated = faceEngine.decimate(bitmap, FaceCameraSession.ANALYSIS_MAX_DIMENSION)
+    /**
+     * Hands one upright frame to the engine and waits until that frame has been scored.
+     *
+     * Called from the camera analyser thread. Launching this on [viewModelScope] returned
+     * before MediaPipe had read the pixels, so the bitmap was eligible for collection and
+     * the detector reported an empty frame.
+     */
+    suspend fun submitBitmap(bitmap: Bitmap) {
+        val decimated = faceEngine.decimate(bitmap, FaceCameraSession.ANALYSIS_MAX_DIMENSION)
+        try {
             val luma = faceEngine.meanLuma(decimated)
             faceEngine.submit(decimated, luma)
+        } finally {
+            if (decimated !== bitmap && !decimated.isRecycled) decimated.recycle()
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
 

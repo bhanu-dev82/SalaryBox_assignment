@@ -2,8 +2,9 @@ package com.bhanu.attendance.data.face
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.SystemClock
-import com.bhanu.attendance.core.common.dispatchers.AppDispatchers
 import com.bhanu.attendance.core.common.logging.AppLogger
 import com.bhanu.attendance.domain.face.FaceLandmark
 import com.bhanu.attendance.domain.face.FaceObservation
@@ -14,13 +15,18 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.android.asCoroutineDispatcher
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,18 +60,29 @@ import kotlin.math.roundToInt
 @Singleton
 class MediaPipeFaceEngine @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val dispatchers: AppDispatchers,
     private val logger: AppLogger,
 ) : FaceEngine, AutoCloseable {
 
-    // FaceLandmarker is single-threaded: every call is serialised through this dispatcher.
-    private val inferenceDispatcher = kotlinx.coroutines.Dispatchers.Default.limitedParallelism(1)
+    // A HandlerThread, not a pool thread: FaceLandmarker installs a Handler during
+    // createFromOptions, which throws if the thread has no Looper. Creation and
+    // detectAsync both run here so the task is never touched from two threads.
+    private val inferenceThread = HandlerThread("FaceInference").apply { start() }
+    private val inferenceDispatcher = Handler(inferenceThread.looper).asCoroutineDispatcher()
 
     @Volatile
     private var landmarker: FaceLandmarker? = null
 
     @Volatile
     private var lastTimestampMillis: Long = 0L
+
+    /** One frame in flight. A second detectAsync while the first is running is dropped. */
+    private val inFlight = AtomicBoolean(false)
+
+    /**
+     * Facts for the frame currently inside `detectAsync`. The result listener does not
+     * receive the bitmap, so width, height and luma travel with the frame here.
+     */
+    private val pending = AtomicReference<FrameFacts?>(null)
 
     private val _observations = MutableSharedFlow<FaceFrameResult>(
         replay = 0,
@@ -79,7 +96,7 @@ class MediaPipeFaceEngine @Inject constructor(
     @Volatile
     private var lastError: AppError? = null
 
-    override suspend fun initialise(): Outcome<Unit> = withContext(dispatchers.io) {
+    override suspend fun initialise(): Outcome<Unit> = withContext(inferenceDispatcher) {
         if (landmarker != null) return@withContext Outcome.success(Unit)
         runCatching {
             val options = FaceLandmarker.FaceLandmarkerOptions.builder()
@@ -100,21 +117,29 @@ class MediaPipeFaceEngine @Inject constructor(
                     // Invoked on a MediaPipe-owned worker thread; must not touch UI state
                     // directly. `_observations` is a thread-safe SharedFlow, so emitting here
                     // is correct and collectors are expected to marshal onward.
+                    val facts = pending.getAndSet(null)
                     val faces = result.faceLandmarks()
-                    if (faces.isEmpty()) {
-                        _observations.tryEmit(FaceFrameResult.NoFace)
-                    } else {
-                        _observations.tryEmit(
-                            FaceFrameResult.Detected(toObservation(faces[0]), faces.size)
+                    when {
+                        facts == null -> Unit
+                        faces.isEmpty() -> _observations.tryEmit(FaceFrameResult.NoFace)
+                        else -> _observations.tryEmit(
+                            FaceFrameResult.Detected(
+                                toObservation(faces[0], facts),
+                                faces.size,
+                            )
                         )
                     }
+                    facts?.done?.complete(Unit)
                 }
                 .setErrorListener { throwable ->
                     logger.w(TAG, "MediaPipe reported an error", throwable)
                     lastError = AppError.FaceEngineUnavailable
+                    pending.getAndSet(null)?.done?.complete(Unit)
+                    _observations.tryEmit(FaceFrameResult.NoFace)
                 }
                 .build()
             landmarker = FaceLandmarker.createFromOptions(context, options)
+            logger.i(TAG, "FaceLandmarker ready")
         }.fold(
             onSuccess = { Outcome.success(Unit) },
             onFailure = { throwable ->
@@ -128,29 +153,73 @@ class MediaPipeFaceEngine @Inject constructor(
     }
 
     override suspend fun submit(bitmap: Bitmap, meanLuma: Float) {
+        // Callers are supposed to initialise first. Doing it here as well means a missed
+        // call cannot silently drop every frame, which is what "face not found" looked like.
+        if (landmarker == null) {
+            val ready = initialise()
+            if (ready is Outcome.Failure) {
+                lastError = ready.error
+                return
+            }
+        }
         val engine = landmarker ?: run {
             lastError = AppError.FaceEngineUnavailable
             return
         }
+        if (!inFlight.compareAndSet(false, true)) return
         // MediaPipe only accepts ARGB_8888. Converting here rather than crashing deep inside
-        // the native layer keeps the failure legible.
+        // the native layer keeps the failure legible. `source` is kept reachable until the
+        // result listener runs: detectAsync reads the bitmap after this function would
+        // otherwise have returned.
         val source = if (bitmap.config == Bitmap.Config.ARGB_8888) {
             bitmap
         } else {
-            runCatching { bitmap.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull() ?: return
+            runCatching { bitmap.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
         }
-        withContext(inferenceDispatcher) {
-            runCatching {
-                // Timestamps must be strictly increasing. uptimeMillis is monotonic, unlike
-                // wall-clock time, so it cannot go backwards when the system clock is adjusted.
-                val now = SystemClock.uptimeMillis()
-                if (now <= lastTimestampMillis) return@runCatching
-                lastTimestampMillis = now
-                engine.detectAsync(BitmapImageBuilder(source).build(), now)
-            }.onFailure { throwable ->
-                logger.w(TAG, "detectAsync failed", throwable)
-                lastError = AppError.FaceEngineUnavailable
+        if (source == null) {
+            inFlight.set(false)
+            return
+        }
+        val copied = source !== bitmap
+        val facts = FrameFacts(
+            width = source.width,
+            height = source.height,
+            meanLuma = meanLuma,
+            done = CompletableDeferred(),
+        )
+        pending.set(facts)
+        try {
+            val queued = withContext(inferenceDispatcher) {
+                runCatching {
+                    // Timestamps must be strictly increasing. uptimeMillis is monotonic, unlike
+                    // wall-clock time, so it cannot go backwards when the system clock is adjusted.
+                    var now = SystemClock.uptimeMillis()
+                    if (now <= lastTimestampMillis) now = lastTimestampMillis + 1
+                    lastTimestampMillis = now
+                    engine.detectAsync(BitmapImageBuilder(source).build(), now)
+                    true
+                }.getOrElse { throwable ->
+                    logger.w(TAG, "detectAsync failed", throwable)
+                    lastError = AppError.FaceEngineUnavailable
+                    false
+                }
             }
+            if (!queued) {
+                pending.compareAndSet(facts, null)
+                facts.done.complete(Unit)
+                _observations.tryEmit(FaceFrameResult.NoFace)
+                return
+            }
+            val finished = withTimeoutOrNull(INFERENCE_TIMEOUT_MILLIS) { facts.done.await() }
+            if (finished == null) {
+                logger.w(TAG, "Face inference timed out")
+                pending.compareAndSet(facts, null)
+                if (!facts.done.isCompleted) facts.done.complete(Unit)
+                _observations.tryEmit(FaceFrameResult.NoFace)
+            }
+        } finally {
+            if (copied && !source.isRecycled) source.recycle()
+            inFlight.set(false)
         }
     }
 
@@ -205,6 +274,7 @@ class MediaPipeFaceEngine @Inject constructor(
         runCatching { landmarker?.close() }
             .onFailure { logger.w(TAG, "Error closing FaceLandmarker", it) }
         landmarker = null
+        inferenceThread.quitSafely()
     }
 
     /**
@@ -215,15 +285,21 @@ class MediaPipeFaceEngine @Inject constructor(
      */
     private fun toObservation(
         landmarks: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>,
+        facts: FrameFacts,
     ): FaceObservation = FaceObservation(
         landmarks = landmarks.map { FaceLandmark(it.x(), it.y(), it.z()) },
-        // MediaPipe reports landmarks normalised to the analysed frame. The image dimensions
-        // are carried on the bitmap by the caller for the selfie pipeline, not by the engine,
-        // so these stay at 0 here; the size gate uses the landmark bounding box, which is
-        // already expressed in the same normalised units.
-        imageWidth = 0,
-        imageHeight = 0,
-        meanLuma = 0f,
+        imageWidth = facts.width,
+        imageHeight = facts.height,
+        // The lighting gate compares this to minMeanLuma. Leaving it at 0 rejects every
+        // real face as "too dark", so the value measured on the submitted frame is required.
+        meanLuma = facts.meanLuma,
+    )
+
+    private class FrameFacts(
+        val width: Int,
+        val height: Int,
+        val meanLuma: Float,
+        val done: CompletableDeferred<Unit>,
     )
 
     companion object {
@@ -231,6 +307,7 @@ class MediaPipeFaceEngine @Inject constructor(
         const val MODEL_ASSET_NAME = "face_landmarker.task"
         const val MIN_CONFIDENCE = 0.5f
         private const val SAMPLE_COUNT = 4_096
+        private const val INFERENCE_TIMEOUT_MILLIS = 5_000L
     }
 }
 
@@ -242,8 +319,11 @@ class MediaPipeFaceEngine @Inject constructor(
  */
 fun FloatArray.toByteBuffer(): ByteBuffer =
     ByteBuffer.allocate(size * 4).order(ByteOrder.LITTLE_ENDIAN).apply {
+        // asFloatBuffer() is a view. It writes the floats into this buffer but does not
+        // move this buffer's position, which stays at 0 with limit already at capacity.
+        // flip() would set the limit to that position (0) and the stored blob would be empty,
+        // so a successful enrolment could not be matched and punch-in crashed on load.
         asFloatBuffer().put(this@toByteBuffer)
-        flip()
     }
 
 fun ByteBuffer.toLittleEndianFloats(size: Int): FloatArray {

@@ -33,7 +33,7 @@ import javax.inject.Inject
 
 /** What the home screen should do next, in one place. */
 sealed interface StaffHomeEvent {
-    data class OpenVerification(val punchType: PunchType) : StaffHomeEvent
+    data class OpenVerification(val staffId: String, val punchType: PunchType) : StaffHomeEvent
     data class ShowMessage(val message: String) : StaffHomeEvent
 }
 
@@ -123,6 +123,7 @@ class StaffHomeViewModel @Inject constructor(
     }
 
     fun onPunchClicked() {
+        val staffId = sessionFlow.value?.staffId
         when (val availability = uiState.value.availability) {
             is PunchAvailability.Blocked ->
                 _events.trySend(StaffHomeEvent.ShowMessage(availability.reason))
@@ -130,8 +131,15 @@ class StaffHomeViewModel @Inject constructor(
             PunchAvailability.Complete ->
                 _events.trySend(StaffHomeEvent.ShowMessage("Today's shift is already complete"))
 
-            else -> PunchRules.nextPunchType(availability)?.let { type ->
-                _events.trySend(StaffHomeEvent.OpenVerification(type))
+            else -> {
+                val type = PunchRules.nextPunchType(availability)
+                if (type == null || staffId == null) {
+                    _events.trySend(
+                        StaffHomeEvent.ShowMessage("Could not start the punch. Sign out and sign in again.")
+                    )
+                } else {
+                    _events.trySend(StaffHomeEvent.OpenVerification(staffId, type))
+                }
             }
         }
     }
