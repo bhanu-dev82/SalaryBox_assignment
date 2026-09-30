@@ -1,7 +1,7 @@
 package com.bhanu.attendance.core.common.logging
 
 import android.util.Log
-import com.bhanu.attendance.core.common.AppContextHolder
+import com.bhanu.attendance.core.common.isDebuggable
 
 /**
  * Logcat logger, used in debug builds only.
@@ -10,7 +10,9 @@ import com.bhanu.attendance.core.common.AppContextHolder
  * accidentally ship logs. Tags are truncated to the 23-character limit logcat enforces —
  * exceeding it throws at runtime, which is a crash caused purely by a long tag.
  */
-class LogcatLogger(private val enabled: Boolean = AppContextHolder.isDebuggable) : AppLogger {
+class LogcatLogger(enabled: Boolean) : AppLogger {
+
+    private val enabled = enabled
 
     override fun d(tag: String, message: String) {
         if (enabled) Log.d(normaliseTag(tag), message)

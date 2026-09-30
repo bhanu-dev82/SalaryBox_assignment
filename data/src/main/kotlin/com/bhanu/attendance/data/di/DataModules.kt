@@ -6,13 +6,13 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
-import com.bhanu.attendance.core.common.AppContextHolder
 import com.bhanu.attendance.core.common.crash.CrashHandler
 import com.bhanu.attendance.core.common.crash.CrashLogStore
 import com.bhanu.attendance.core.common.crash.FileCrashLogStore
 import com.bhanu.attendance.core.common.dispatchers.AppDispatchers
 import com.bhanu.attendance.core.common.dispatchers.DefaultAppDispatchers
 import com.bhanu.attendance.core.common.logging.AppLogger
+import com.bhanu.attendance.core.common.isDebuggable
 import com.bhanu.attendance.core.common.logging.LogcatLogger
 import com.bhanu.attendance.core.common.logging.NoOpLogger
 import com.bhanu.attendance.data.face.FaceEngine
@@ -24,6 +24,8 @@ import com.bhanu.attendance.data.local.dao.FaceTemplateDao
 import com.bhanu.attendance.data.local.dao.SettingsDao
 import com.bhanu.attendance.data.local.dao.StaffDao
 import com.bhanu.attendance.data.security.Pbkdf2PinHasher
+import com.bhanu.attendance.data.location.PlayServicesLocationProvider
+import com.bhanu.attendance.domain.repository.LocationProvider
 import com.bhanu.attendance.data.security.PinHasher
 import com.bhanu.attendance.data.storage.FileSelfieStorage
 import com.bhanu.attendance.domain.repository.AttendanceRepository
@@ -74,8 +76,8 @@ object CoreModule {
 
     @Provides
     @Singleton
-    fun provideLogger(): AppLogger =
-        if (AppContextHolder.isDebuggable) LogcatLogger() else NoOpLogger
+    fun provideLogger(@ApplicationContext context: Context): AppLogger =
+        if (context.isDebuggable) LogcatLogger(context.isDebuggable) else NoOpLogger
 
     /**
      * A `SupervisorJob` so one failed child — an audit write, a camera rebind — cannot cancel
@@ -101,8 +103,8 @@ object CoreModule {
 
     @Provides
     @Singleton
-    fun provideCrashLogStore(): CrashLogStore =
-        FileCrashLogStore(File(AppContextHolder.require().filesDir, "crash-reports"))
+    fun provideCrashLogStore(@ApplicationContext context: Context): CrashLogStore =
+        FileCrashLogStore(File(context.filesDir, "crash-reports"))
 
     @Provides
     @Singleton
@@ -201,6 +203,17 @@ object ExternalModule {
     fun provideFusedLocationClient(@ApplicationContext context: Context) =
         com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
 
+    /**
+     * The PIN hashing cost, stated once in the DI graph.
+     *
+     * Provided explicitly rather than relying on a constructor default, so that raising the
+     * iteration count is a one-line, greppable change rather than a hunt through call sites.
+     */
+    @Provides
+    @Singleton
+    fun providePinHasher(): PinHasher =
+        Pbkdf2PinHasher(iterations = Pbkdf2PinHasher.DEFAULT_ITERATIONS)
+
     @Provides
     @Singleton
     fun provideSelfieStorage(
@@ -240,9 +253,9 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
-    abstract fun bindPinHasher(impl: Pbkdf2PinHasher): PinHasher
+    abstract fun bindFaceEngine(impl: MediaPipeFaceEngine): FaceEngine
 
     @Binds
     @Singleton
-    abstract fun bindFaceEngine(impl: MediaPipeFaceEngine): FaceEngine
+    abstract fun bindLocationProvider(impl: PlayServicesLocationProvider): LocationProvider
 }

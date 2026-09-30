@@ -1,7 +1,6 @@
 package com.bhanu.attendance.core.common.crash
 
 import android.os.Build
-import com.bhanu.attendance.core.common.AppContextHolder
 import com.bhanu.attendance.core.common.logging.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -124,6 +123,12 @@ class FileCrashLogStore(
  * Captures uncaught exceptions, writes a report, then hands control to the platform handler
  * so the process still dies normally.
  *
+ * Note this takes its [CrashLogStore] as a constructor parameter rather than reaching for a
+ * global context: the uncaught-exception handler has to be installed from
+ * `Application.onCreate`, which is *after* Hilt's injection phase, so it cannot rely on a
+ * context the DI graph has already resolved. The store is constructed in the graph instead
+ * and injected here.
+ *
  * ### Why this exists
  *
  * The public reviews for the real SalaryBox app repeatedly complain about crashes and
@@ -202,14 +207,6 @@ class CrashHandler(
     private companion object {
         const val TAG = "CrashHandler"
         const val FLUSH_GRACE_MILLIS = 120L
-    }
-}
-
-/** Convenience factory wiring the handler to app-internal storage. */
-object CrashReporterFactory {
-    fun create(scope: CoroutineScope, logger: AppLogger, appVersion: String): CrashHandler {
-        val directory = File(AppContextHolder.require().filesDir, "crash-reports")
-        return CrashHandler(FileCrashLogStore(directory), scope, logger, appVersion)
     }
 }
 

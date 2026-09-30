@@ -29,6 +29,11 @@ android {
 }
 
 dependencies {
+    // The design system is app-specific rather than a generic library: components like the
+    // face-capture overlay render domain concepts (QualityIssue) and status colours map to
+    // domain states. Depending on :domain one-way keeps :domain free of any UI knowledge.
+    api(project(":domain"))
+
     api(platform(libs.compose.bom))
     api(libs.compose.ui)
     api(libs.compose.ui.graphics)
@@ -36,6 +41,17 @@ dependencies {
     api(libs.compose.material.icons.extended)
     api(libs.activity.compose)
     api(libs.lifecycle.runtime.compose)
+
+    // The face-capture session is shared by admin enrolment and staff attendance, so it lives
+    // in the shared UI module rather than being duplicated in both feature modules.
+    api(project(":data"))
+    implementation(project(":core:common"))
+
+    implementation(libs.camera.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
+    implementation(libs.coroutines.android)
 
     implementation(libs.adaptive)
     implementation(libs.adaptive.layout)

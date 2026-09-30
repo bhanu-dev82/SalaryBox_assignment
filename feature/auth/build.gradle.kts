@@ -11,7 +11,11 @@ android {
 
     defaultConfig { minSdk = 26 }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        // R.string.* is referenced from Kotlin, so the generated R class must exist.
+        androidResources = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

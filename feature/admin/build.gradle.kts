@@ -42,6 +42,7 @@ dependencies {
     implementation(libs.dagger.hilt.android)
     ksp(libs.dagger.hilt.android.compiler)
     implementation(libs.navigation.compose)
+    implementation(libs.camera.view)
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)

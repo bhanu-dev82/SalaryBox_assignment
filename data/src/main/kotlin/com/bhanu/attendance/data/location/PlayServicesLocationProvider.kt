@@ -17,6 +17,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -31,7 +32,7 @@ import kotlin.coroutines.resume
  */
 @Singleton
 class PlayServicesLocationProvider @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val client: FusedLocationProviderClient,
     private val dispatchers: AppDispatchers,
     private val logger: AppLogger,

@@ -1,0 +1,246 @@
+package com.bhanu.attendance.core.designsystem.camera
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.util.Size
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import com.bhanu.attendance.core.common.logging.AppLogger
+import com.bhanu.attendance.data.face.FaceEngine
+import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.File
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+/** Failures the camera pipeline can hit, each with a message a person can act on. */
+sealed interface CameraFailure {
+    data class Bind(val detail: String) : CameraFailure
+    data object NoCamera : CameraFailure
+    data object CaptureFailed : CameraFailure
+}
+
+/**
+ * Owns one CameraX session: preview, frame analysis and still capture.
+ *
+ * Created once per composition and released in `onDispose`. Split out of the composable so the
+ * camera lifecycle is explicit and testable, rather than spread across `addListener` callbacks
+ * inside a UI function.
+ *
+ * ### Back-pressure
+ *
+ * `STRATEGY_KEEP_ONLY_LATEST` plus an [AtomicBoolean] guard means at most one frame is in
+ * flight. If inference is slower than the camera, frames are **dropped**, not queued —
+ * queueing grows without bound and eventually OOMs a cheap handset. The same applies to
+ * `ImageProxy`: it must be closed exactly once per frame or the whole pipeline stalls.
+ */
+class FaceCameraSession(
+    private val context: Context,
+    private val faceEngine: FaceEngine,
+    private val logger: AppLogger,
+) {
+    /** Camera frames arrive here on a dedicated thread, never the main thread. */
+    val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val inFlight = AtomicBoolean(false)
+
+    private var provider: ProcessCameraProvider? = null
+    private var imageCapture: ImageCapture? = null
+
+    val previewView: PreviewView = PreviewView(context).apply {
+        // COMPATIBLE uses a TextureView, which works on every device. PERFORMANCE is
+        // marginally faster but is not universally safe.
+        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        // FILL_CENTER centre-crops, so the preview and the analysed frame share a centre and
+        // the overlay needs only a uniform scale rather than letterbox padding.
+        scaleType = PreviewView.ScaleType.FILL_CENTER
+    }
+
+    /**
+     * Binds preview + analysis + still capture to [lifecycleOwner].
+     *
+     * `onFrame` is invoked once per accepted frame. Errors are reported through [onFailure]
+     * rather than thrown, because an exception here would surface as an uncaught exception on
+     * a listener thread and kill the process.
+     */
+    suspend fun bind(
+        lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+        onFrame: (android.graphics.Bitmap) -> Unit,
+        onFailure: (CameraFailure) -> Unit,
+    ) {
+        val cameraProvider = try {
+            ProcessCameraProvider.getInstance(context).awaitCancellable()
+        } catch (t: Throwable) {
+            logger.w(TAG, "Camera provider unavailable", t)
+            onFailure(CameraFailure.NoCamera)
+            return
+        }
+        provider = cameraProvider
+
+        if (!cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+            onFailure(CameraFailure.NoCamera)
+            return
+        }
+
+        val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            // 720p is ample for landmark detection and far cheaper than 1080p on a low-end
+            // handset, where this runs continuously.
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(1280, 720),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        )
+                    )
+                    .build()
+            )
+            .build()
+
+        analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+            if (!inFlight.compareAndSet(false, true)) {
+                imageProxy.close()
+                return@setAnalyzer
+            }
+            try {
+                // toBitmap() is a default method in CameraX 1.6.2 that handles the crop
+                // rect and row/pixel strides, so no hand-rolled stride maths is needed.
+                runCatching { imageProxy.toBitmap() }
+                    .onSuccess(onFrame)
+                    .onFailure { logger.w(TAG, "Frame decode failed", it) }
+            } finally {
+                imageProxy.close()
+                inFlight.set(false)
+            }
+        }
+
+        val capture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setFlashMode(ImageCapture.FLASH_MODE_OFF)
+            .build()
+        imageCapture = capture
+
+        runCatching {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_FRONT_CAMERA,
+                preview,
+                analysis,
+                capture,
+            )
+        }.onFailure { throwable ->
+            logger.e(TAG, "bindToLifecycle failed", throwable)
+            onFailure(
+                CameraFailure.Bind(
+                    throwable.message?.takeIf { it.isNotBlank() }
+                        ?: "This device could not start the camera."
+                )
+            )
+        }
+    }
+
+    /**
+     * Captures a still and returns downscaled JPEG bytes, or null on failure.
+     *
+     * Used for the attendance selfie. The encode happens off the main thread; CameraX itself
+     * writes the file on its own executor.
+     */
+    suspend fun captureJpeg(destination: File, maxDimension: Int = 1280, quality: Int = 85): ByteArray? {
+        val capture = imageCapture ?: return null
+        val options = ImageCapture.OutputFileOptions.Builder(destination).build()
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                capture.takePicture(
+                    options,
+                    ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(results: ImageCapture.OutputFileResults) {
+                            val bytes = runCatching {
+                                val decoded = android.graphics.BitmapFactory.decodeFile(destination.absolutePath)
+                                decoded?.let {
+                                    val encoded = com.bhanu.attendance.data.storage.SelfieEncoder()
+                                        .encode(it, maxDimension, quality)
+                                    it.recycle()
+                                    encoded
+                                }
+                            }.getOrNull()
+                            if (continuation.isActive) continuation.resume(bytes)
+                        }
+
+                        override fun onError(exception: ImageCaptureException) {
+                            logger.w(TAG, "Still capture failed", exception)
+                            if (continuation.isActive) continuation.resume(null)
+                        }
+                    },
+                )
+            }
+        } catch (t: Throwable) {
+            logger.w(TAG, "captureJpeg threw", t)
+            null
+        } finally {
+            runCatching { destination.delete() }
+        }
+    }
+
+    fun release() {
+        runCatching { provider?.unbindAll() }
+            .onFailure { logger.w(TAG, "Unbind failed", it) }
+        provider = null
+        imageCapture = null
+        analysisExecutor.shutdown()
+    }
+
+    companion object {
+        private const val TAG = "FaceCamera"
+
+        /** Frames are decimated to at most this on the longest edge before inference. */
+        const val ANALYSIS_MAX_DIMENSION = 720
+    }
+}
+
+fun Context.hasCameraPermission(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+        PackageManager.PERMISSION_GRANTED
+
+/**
+ * Awaits a [ListenableFuture] without pulling in `kotlinx-coroutines-guava`.
+ *
+ * Hand-rolled because it is twenty lines and the dependency is not otherwise needed; the APK
+ * is already large from MediaPipe's native libraries.
+ */
+suspend fun <T> ListenableFuture<T>.awaitCancellable(): T =
+    suspendCancellableCoroutine { continuation ->
+        addListener(
+            {
+                runCatching { get() }
+                    .onSuccess { if (continuation.isActive) continuation.resume(it) }
+                    .onFailure { if (continuation.isActive) continuation.resumeWithException(it) }
+            },
+            MainThreadExecutor,
+        )
+        continuation.invokeOnCancellation { cancel(false) }
+    }
+
+/** Runs continuations on the main thread, matching CameraX's own listener expectations. */
+private object MainThreadExecutor : java.util.concurrent.Executor {
+    override fun execute(command: Runnable) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post(command)
+    }
+}

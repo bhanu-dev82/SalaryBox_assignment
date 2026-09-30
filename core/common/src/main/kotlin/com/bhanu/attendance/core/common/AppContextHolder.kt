@@ -21,16 +21,16 @@ object AppContextHolder {
     /**
      * The application context.
      *
-     * @throws IllegalStateException if called before [install]. Failing loudly here is
-     * correct: silently returning null would push a null check into every caller and hide a
-     * genuine initialisation-order bug.
+     * @throws IllegalStateException if called before [install]. Failing loudly is correct
+     * here: returning null would push a null check into every caller and hide a genuine
+     * initialisation-order bug.
+     *
+     * Note this holder is *not* usable from the Hilt graph. Injection happens inside
+     * `Application.super.onCreate()`, strictly before a subclass `onCreate` body runs, so
+     * anything the graph needs must come from Hilt's own `@ApplicationContext` binding.
      */
     fun require(): Context = appContext
         ?: error("AppContextHolder.install() was not called from Application.onCreate()")
 
     fun peek(): Context? = appContext
-
-    val isDebuggable: Boolean
-        get() = (runCatching { require().applicationInfo.flags }
-            .getOrNull() ?: 0) and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToInt
@@ -52,7 +53,7 @@ import kotlin.math.roundToInt
  */
 @Singleton
 class MediaPipeFaceEngine @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
     private val dispatchers: AppDispatchers,
     private val logger: AppLogger,
 ) : FaceEngine, AutoCloseable {

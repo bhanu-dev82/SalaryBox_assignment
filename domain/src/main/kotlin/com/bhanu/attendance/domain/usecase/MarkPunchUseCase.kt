@@ -190,30 +190,42 @@ class RecordRejectedPunchUseCase @Inject constructor(
     }
 }
 
-/** Records that an enrolment attempt happened, successful or not. */
+/**
+ * Records an enrolment attempt.
+ *
+ * Takes primitives rather than a [Staff]: the caller is a camera screen that has a staff id
+ * and a name, and fabricating a whole domain object just to log it invited duplication.
+ */
 class RecordEnrolmentAuditUseCase @Inject constructor(
     private val auditRepository: AuditRepository,
 ) {
-    suspend fun enrolled(adminId: String, staff: Staff, sampleCount: Int, intraClass: Double) {
+    suspend fun enrolled(
+        adminId: String,
+        staffId: String,
+        staffName: String,
+        sampleCount: Int,
+        /** The worst pairwise similarity, which is what the threshold is calibrated from. */
+        intraClassMinSimilarity: Double,
+    ) {
         runCatchingOutcome {
             auditRepository.log(
                 actorId = adminId,
                 actorRole = Role.ADMIN,
-                action = if (staff.isFaceEnrolled) AuditAction.FACE_REENROLLED else AuditAction.FACE_ENROLLED,
-                targetStaffId = staff.id,
-                detail = "$sampleCount samples, intra=${"%.3f".format(intraClass)}",
+                action = AuditAction.FACE_ENROLLED,
+                targetStaffId = staffId,
+                detail = "$sampleCount samples, intra=${"%.4f".format(intraClassMinSimilarity)}",
             )
         }
     }
 
-    suspend fun failed(adminId: String, staff: Staff, reason: String) {
+    suspend fun failed(adminId: String, staffId: String, reason: String) {
         runCatchingOutcome {
             auditRepository.log(
                 actorId = adminId,
                 actorRole = Role.ADMIN,
                 action = AuditAction.FACE_ENROLMENT_FAILED,
-                targetStaffId = staff.id,
-                detail = reason,
+                targetStaffId = staffId,
+                detail = reason.take(200),
             )
         }
     }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="staff_title">My attendance</string>
+    <string name="staff_punch_in">Punch in</string>
+    <string name="staff_punch_out">Punch out</string>
+    <string name="staff_history">History</string>
+    <string name="staff_punched_in_at">Punched in at %1$s</string>
+    <string name="staff_punched_out_at">Punched out at %1$s</string>
+    <string name="staff_not_punched_in">Not punched in yet today</string>
+    <string name="staff_shift_complete">Today\'s shift is complete</string>
+    <string name="staff_verify_title">Verify your face</string>
+    <string name="staff_verifying">Checking…</string>
+    <string name="staff_verified">Face matched</string>
+    <string name="staff_not_verified">Face did not match</string>
+    <string name="staff_record_punch">Record punch</string>
+    <string name="staff_inside_geofence">Inside the work site</string>
+    <string name="staff_outside_geofence">Outside the work site (%1$s away)</string>
+    <string name="staff_no_location">No location recorded</string>
+    <string name="staff_no_geofence">No work site configured</string>
+    <string name="staff_history_title">Attendance history</string>
+    <string name="staff_history_empty">No punches recorded yet</string>
+    <string name="staff_location_permission">Location is off. Your punch will be saved without it.</string>
+    <string name="staff_punch_out_disabled">Punch-out is turned off for this site, so one punch covers the whole day.</string>
+</resources>

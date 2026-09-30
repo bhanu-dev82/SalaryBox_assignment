@@ -39,7 +39,10 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            // No applicationIdSuffix: the assignment specifies the package name
+            // com.bhanu.attendance, and a .debug suffix would make the installed package
+            // differ from the one the reviewer expects. Version is still marked so a debug
+            // build is identifiable on the device.
             versionNameSuffix = "-debug"
             isMinifyEnabled = false
         }

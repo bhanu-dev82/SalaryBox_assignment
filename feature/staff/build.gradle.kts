@@ -11,7 +11,10 @@ android {
 
     defaultConfig { minSdk = 26 }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        androidResources = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -42,6 +45,7 @@ dependencies {
     implementation(libs.dagger.hilt.android)
     ksp(libs.dagger.hilt.android.compiler)
     implementation(libs.navigation.compose)
+    implementation(libs.camera.view)
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)

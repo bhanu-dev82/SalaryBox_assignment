@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Compose supplies the real theming. This theme only styles the pre-Compose launch window.
+
+      `android:Theme.Material.DayNight.NoActionBar` does not exist below API 29, so DayNight
+      is achieved with a values-night variant of a Light base instead. Without this the app
+      flashes white on a dark-theme device before the first frame.
+    -->
+    <style name="Theme.BhanuAttendance" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

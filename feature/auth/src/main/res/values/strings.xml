@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="auth_title">Bhanu Attendance</string>
+    <string name="auth_subtitle">Sign in to mark or manage attendance</string>
+    <string name="auth_role_admin">Admin</string>
+    <string name="auth_role_staff">Staff</string>
+    <string name="auth_employee_id">Employee ID</string>
+    <string name="auth_pin">PIN</string>
+    <string name="auth_sign_in">Sign in</string>
+    <string name="auth_signing_in">Signing in…</string>
+    <string name="auth_demo_credentials">Demo credentials</string>
+    <string name="auth_no_account">No account? Ask an admin to add you.</string>
+</resources>

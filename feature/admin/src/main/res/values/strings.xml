@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="admin_title">Staff</string>
+    <string name="admin_add_staff">Add staff</string>
+    <string name="admin_search">Search staff</string>
+    <string name="admin_empty_title">No staff yet</string>
+    <string name="admin_empty_message">Add your first staff member to get started.</string>
+    <string name="admin_empty_filtered_title">No matches</string>
+    <string name="admin_empty_filtered_message">No staff member matches that search.</string>
+    <string name="admin_name">Full name</string>
+    <string name="admin_employee_id">Employee ID</string>
+    <string name="admin_initial_pin">Initial PIN (4–12 digits)</string>
+    <string name="admin_create">Create</string>
+    <string name="admin_cancel">Cancel</string>
+    <string name="admin_enrol_face">Enrol face</string>
+    <string name="admin_reenrol_face">Re-enrol face</string>
+    <string name="admin_enrolled">Face enrolled</string>
+    <string name="admin_not_enrolled">Not enrolled</string>
+    <string name="admin_reset_pin">Reset PIN</string>
+    <string name="admin_deactivate">Deactivate</string>
+    <string name="admin_activate">Activate</string>
+    <string name="admin_select_staff">Select a staff member</string>
+    <string name="admin_enrol_title">Enrol face</string>
+    <string name="admin_enrol_permission">Camera access is needed to enrol a face.</string>
+    <string name="admin_enrol_grant">Grant camera access</string>
+    <string name="admin_enrol_progress">Sample %1$d of %2$d</string>
+    <string name="admin_enrol_complete">Face enrolled</string>
+    <string name="admin_enrol_done">Done</string>
+    <string name="admin_attendance_count">%1$d punches recorded</string>
+</resources>
