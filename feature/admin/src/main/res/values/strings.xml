@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="admin_title">Staff</string>
+    <string name="admin_sign_out">Sign out</string>
     <string name="admin_add_staff">Add staff</string>
     <string name="admin_search">Search staff</string>
     <string name="admin_empty_title">No staff yet</string>

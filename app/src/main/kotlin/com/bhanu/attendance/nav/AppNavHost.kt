@@ -117,6 +117,12 @@ fun AppNavHost(
                     )
                 },
                 onShowMessage = { /* snackbars are owned by the screen */ },
+                onSignOut = {
+                    sessionViewModel.signOut()
+                    navController.navigate(Destination.Login.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
             )
         }
 

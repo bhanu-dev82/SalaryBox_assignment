@@ -151,12 +151,14 @@ class StaffListViewModel @Inject constructor(
 
     fun openAddDialog() {
         _addStaffState.value = AddStaffUiState()
-        _events.trySend(StaffListEvent.OpenAddDialog)
+        // The dialog reads this flag. Sending an event and ignoring it left both
+        // add buttons with nothing to show.
+        dialogState.value = true
     }
 
     fun closeAddDialog() {
-        _addStaffState.update { it.copy(isSubmitting = false, errorMessage = null) }
-        _events.trySend(StaffListEvent.CloseAddDialog)
+        dialogState.value = false
+        _addStaffState.value = AddStaffUiState()
     }
 
     fun submitAddStaff(name: String, employeeId: String, pin: String) {
@@ -166,8 +168,7 @@ class StaffListViewModel @Inject constructor(
         viewModelScope.launch {
             when (val outcome = addStaffMember(name, employeeId, pin, actorId = ADMIN_ACTOR_ID)) {
                 is Outcome.Success -> {
-                    _addStaffState.value = AddStaffUiState()
-                    _events.trySend(StaffListEvent.CloseAddDialog)
+                    closeAddDialog()
                     // Select the new person so the detail pane shows them on a wide screen,
                     // which makes the creation visibly take effect.
                     selectedId.value = outcome.value.id

@@ -10,10 +10,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Search
@@ -26,6 +28,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -98,6 +101,7 @@ fun StaffListRoute(
     onSelectStaff: (String?) -> Unit,
     onOpenEnrolment: (staffId: String, staffName: String) -> Unit,
     onShowMessage: (String) -> Unit,
+    onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: StaffListViewModel = hiltViewModel(),
 ) {
@@ -158,13 +162,20 @@ fun StaffListRoute(
                 TopAppBar(
                     title = { Text(stringResource(R.string.admin_title)) },
                     actions = {
-                        IconButton(
-                            onClick = viewModel::openAddDialog,
-                            modifier = Modifier.testTag("admin_add_button"),
+                        OutlinedButton(
+                            onClick = onSignOut,
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .testTag("admin_sign_out"),
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = stringResource(R.string.admin_add_staff),
+                                imageVector = Icons.AutoMirrored.Filled.Logout,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.admin_sign_out),
+                                modifier = Modifier.padding(start = 6.dp),
                             )
                         }
                     },
